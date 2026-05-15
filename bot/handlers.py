@@ -27,10 +27,48 @@ from sqlalchemy import select, update
 from utils.logger import logger
 
 
+# ── Error Handler ─────────────────────────────────────────────
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Log errors and notify user"""
+    logger.error(f"Update {update} caused error {context.error}")
+    print(f"ERROR: {context.error}")
+    
+    # Try to notify the user
+    if update and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ An error occurred. Please try again or contact support."
+            )
+        except:
+            pass
+
+
+# ── Test Command ──────────────────────────────────────────────
+
+async def cmd_test(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Simple test command to verify bot is working"""
+    try:
+        user = update.effective_user
+        logger.info(f"Test command received from {user.id}")
+        print(f"Test command from {user.id}")
+        await update.message.reply_text(
+            "✅ *Bot is working!*\n\n"
+            "Send /menu to get started with No-Brain-Trade Pro.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        print(f"Test command succeeded for {user.id}")
+    except Exception as e:
+        logger.error(f"Test command failed: {e}")
+        print(f"Test command error: {e}")
+        await update.message.reply_text("❌ Error processing command. Please try again.")
+
+
 # ── /start ────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    print(f"Start command from {user.id}")
     async with SessionLocal() as db:
         await get_or_create_user(db, user.id, user.username, user.first_name)
 
@@ -377,6 +415,7 @@ async def cb_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "ℹ️ *HELP*\n\n"
         "`/start` — Start the bot\n"
         "`/menu` — Main menu\n"
+        "`/test` — Test if bot is working\n"
         "`/verify <TX>` — Verify Pro payment\n\n"
         "*Free:* Spike alerts when tokens pump 150%+\n\n"
         "*Pro:* Full AI analysis with each alert + "
@@ -490,10 +529,14 @@ async def broadcast_spike_alert(
 # ── Register all handlers ─────────────────────────────────────
 
 def register(app: Application):
+    """Register all bot handlers"""
+    # Command handlers
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("menu",   cmd_menu))
     app.add_handler(CommandHandler("verify", cmd_verify))
-
+    app.add_handler(CommandHandler("test",   cmd_test))
+    
+    # Callback query handlers
     app.add_handler(CallbackQueryHandler(cb_sub_info,       pattern="^sub_info$"))
     app.add_handler(CallbackQueryHandler(cb_sub_pay,        pattern="^sub_pay$"))
     app.add_handler(CallbackQueryHandler(cb_wallet_info,    pattern="^wallet_info$"))
@@ -505,3 +548,8 @@ def register(app: Application):
     app.add_handler(CallbackQueryHandler(cb_alert_toggle,   pattern="^alert_toggle$"))
     app.add_handler(CallbackQueryHandler(cb_help,           pattern="^help$"))
     app.add_handler(CallbackQueryHandler(_menu_msg,         pattern="^menu$"))
+    
+    # Error handler
+    app.add_error_handler(error_handler)
+    
+    logger.info("✓ Bot handlers registered")
