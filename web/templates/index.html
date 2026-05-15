@@ -12,7 +12,7 @@
         }
         
         body {
-            font-family: 'Courier New', monospace;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, monospace;
             background: #0a0a0a;
             color: #00ff00;
             padding: 20px;
@@ -26,12 +26,13 @@
         }
         
         .header h1 {
-            font-size: 24px;
+            font-size: 1.5rem;
         }
         
         .header p {
             color: #888;
-            font-size: 12px;
+            font-size: 0.75rem;
+            margin-top: 10px;
         }
         
         .token-list {
@@ -51,7 +52,7 @@
         .token.spike {
             border-left-color: #ff0000;
             background: #1a0000;
-            animation: pulse 1s;
+            animation: pulse 0.5s;
         }
         
         @keyframes pulse {
@@ -82,6 +83,13 @@
             font-size: 10px;
             color: #666;
             margin-top: 5px;
+            font-family: monospace;
+        }
+        
+        .token-time {
+            font-size: 10px;
+            color: #444;
+            margin-top: 5px;
         }
         
         .footer {
@@ -97,69 +105,112 @@
             padding: 10px;
             color: #00ff00;
             font-size: 12px;
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background: #000;
+            border-radius: 5px;
+            padding: 5px 10px;
+        }
+        
+        .status.offline {
+            color: #ff0000;
+        }
+        
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            .token {
+                padding: 10px;
+            }
+            .token-symbol {
+                font-size: 14px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>⚡ NO-BRAIN-TRADE PRO ⚡</h1>
-        <p>Real-time pump.fun spike detection | 150%+ alerts</p>
-    </div>
-    
-    <div class="status" id="status">
-        Connecting...
+        <p>Real-time pump.fun spike detection | 150%+ alerts | AI Analysis</p>
     </div>
     
     <div class="token-list" id="tokens">
-        <div class="token">Waiting for spikes...</div>
+        <div class="token" style="text-align: center; color: #666;">
+            Waiting for spikes...
+        </div>
     </div>
     
     <div class="footer">
-        Free alerts | Pro AI analysis | Non-custodial auto-trading
+        <p>Free alerts | Pro AI analysis | Non-custodial auto-trading</p>
+        <p style="margin-top: 10px;">🔒 Your keys, your crypto</p>
+    </div>
+    
+    <div class="status" id="status">
+        🔄 Connecting...
     </div>
     
     <script>
-        const eventSource = new EventSource('/events');
-        const tokensDiv = document.getElementById('tokens');
-        const statusDiv = document.getElementById('status');
+        let reconnectAttempts = 0;
+        let eventSource = null;
         
-        eventSource.onopen = function() {
-            statusDiv.innerHTML = '✅ Connected - watching for spikes';
-            statusDiv.style.color = '#00ff00';
-        };
-        
-        eventSource.onerror = function() {
-            statusDiv.innerHTML = '❌ Disconnected - reconnecting...';
-            statusDiv.style.color = '#ff0000';
-        };
-        
-        eventSource.addEventListener('spike', function(event) {
-            const data = JSON.parse(event.data);
-            addToken(data, true);
-        });
-        
-        eventSource.addEventListener('token', function(event) {
-            const data = JSON.parse(event.data);
-            addToken(data, false);
-        });
-        
-        eventSource.addEventListener('ping', function() {
-            // Keep connection alive
-        });
+        function connectSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource('/events');
+            
+            eventSource.onopen = function() {
+                document.getElementById('status').innerHTML = '✅ Live';
+                document.getElementById('status').style.color = '#00ff00';
+                reconnectAttempts = 0;
+            };
+            
+            eventSource.onerror = function() {
+                document.getElementById('status').innerHTML = '⚠️ Reconnecting...';
+                document.getElementById('status').style.color = '#ffaa00';
+                reconnectAttempts++;
+                
+                if (reconnectAttempts > 5) {
+                    setTimeout(connectSSE, 5000);
+                }
+            };
+            
+            eventSource.addEventListener('spike', function(event) {
+                const data = JSON.parse(event.data);
+                addToken(data, true);
+            });
+            
+            eventSource.addEventListener('token', function(event) {
+                const data = JSON.parse(event.data);
+                addToken(data, false);
+            });
+            
+            eventSource.addEventListener('ping', function() {
+                // Keep connection alive
+            });
+        }
         
         function addToken(token, isSpike) {
+            const tokensDiv = document.getElementById('tokens');
             const tokenDiv = document.createElement('div');
             tokenDiv.className = isSpike ? 'token spike' : 'token';
             
-            const spikeBadge = isSpike ? `<span class="token-spike">🚀 +${token.spike_pct.toFixed(0)}%</span>` : '';
+            const spikeBadge = isSpike ? `<span class="token-spike">🚀 +${token.spike_pct ? token.spike_pct.toFixed(0) : '0'}%</span>` : '';
+            const price = token.price_sol ? token.price_sol.toFixed(8) : '0';
+            const mintShort = token.mint ? `${token.mint.slice(0, 8)}...${token.mint.slice(-8)}` : 'Unknown';
+            const time = new Date().toLocaleTimeString();
             
             tokenDiv.innerHTML = `
                 <div>
-                    <span class="token-symbol">${token.symbol}</span>
+                    <span class="token-symbol">${token.symbol || '???'}</span>
                     ${spikeBadge}
-                    <span class="token-price">💰 ${token.price_sol.toFixed(8)} SOL</span>
+                    <span class="token-price">💰 ${price} SOL</span>
                 </div>
-                <div class="token-mint">${token.mint.slice(0, 8)}...${token.mint.slice(-8)}</div>
+                <div class="token-mint">📝 ${mintShort}</div>
+                <div class="token-time">🕐 ${time}</div>
             `;
             
             tokensDiv.prepend(tokenDiv);
@@ -168,7 +219,32 @@
             while (tokensDiv.children.length > 50) {
                 tokensDiv.removeChild(tokensDiv.lastChild);
             }
+            
+            // Play sound on spike (optional)
+            if (isSpike) {
+                try {
+                    const audio = new Audio('data:audio/wav;base64,U3RlYWx0aCBzb3VuZCBub3QgYXZhaWxhYmxl');
+                    audio.play().catch(() => {});
+                } catch(e) {}
+            }
         }
+        
+        // Start connection
+        connectSSE();
+        
+        // Health check
+        setInterval(async () => {
+            try {
+                const response = await fetch('/health');
+                if (!response.ok) {
+                    document.getElementById('status').innerHTML = '⚠️ Server error';
+                    document.getElementById('status').style.color = '#ff0000';
+                }
+            } catch(e) {
+                document.getElementById('status').innerHTML = '🔌 Disconnected';
+                document.getElementById('status').style.color = '#ff0000';
+            }
+        }, 30000);
     </script>
 </body>
 </html>
