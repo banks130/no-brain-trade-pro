@@ -2,10 +2,11 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 from datetime import datetime
 from models.token import TokenData
-from models.db import User, Subscription, UserWallet, AutoTradeConfig, get_db
-from utils.subscription import verify_payment, activate_subscription
+from models.db import User, UserWallet, AutoTradeConfig, get_db
+from utils.subscription import verify_payment, activate_subscription, check_subscription
 from utils.wallet import generate_keypair, encrypt_private_key
 from utils.logger import logger
+from config import PRO_PRICE_SOL
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -41,20 +42,22 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("1 Month - 0.5 SOL", callback_data="sub_1")],
-        [InlineKeyboardButton("3 Months - 1.2 SOL", callback_data="sub_3")],
-        [InlineKeyboardButton("6 Months - 2.0 SOL", callback_data="sub_6")],
+        [InlineKeyboardButton(f"1 Month - {PRO_PRICE_SOL} SOL", callback_data="sub_1")],
+        [InlineKeyboardButton(f"3 Months - {PRO_PRICE_SOL * 2.4} SOL", callback_data="sub_3")],
+        [InlineKeyboardButton(f"6 Months - {PRO_PRICE_SOL * 4} SOL", callback_data="sub_6")],
         [InlineKeyboardButton("🔙 Back", callback_data="menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "💰 *Pro Subscription*\n\n"
-        "Features:\n"
-        "✅ Full DeepNet AI analysis\n"
-        "✅ Bundle/whale detection\n"
-        "✅ Auto-trading bot\n"
-        "✅ Take profit / Stop loss\n\n"
-        "Select duration:",
+        f"💰 *Pro Subscription*\n\n"
+        f"Price: {PRO_PRICE_SOL} SOL/month\n\n"
+        f"Features:\n"
+        f"✅ Full DeepNet AI analysis\n"
+        f"✅ Bundle/whale detection\n"
+        f"✅ Auto-trading bot\n"
+        f"✅ Take profit / Stop loss\n\n"
+        f"Send SOL to:\n`{TREASURY_WALLET}`\n\n"
+        f"Then /verify <TX_SIGNATURE>",
         parse_mode="Markdown",
         reply_markup=reply_markup
     )
@@ -106,9 +109,24 @@ async def autotrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Status: {status}\n"
             f"Trade amount: {config.trade_sol} SOL\n"
             f"Slippage: {config.slippage_bps/100}%\n\n"
-            f"Use buttons to configure:",
+            f"Use /set_trade <SOL> to change amount\n"
+            f"Use /enable or /disable to control",
             parse_mode="Markdown"
         )
+
+async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not context.args:
+        await update.message.reply_text("Usage: /verify <TX_SIGNATURE>")
+        return
+    
+    tx_signature = context.args[0]
+    
+    if await verify_payment(tx_signature, PRO_PRICE_SOL):
+        await activate_subscription(user_id, 1)
+        await update.message.reply_text("✅ Pro activated! You now have full access.")
+    else:
+        await update.message.reply_text("❌ Verification failed. Please check transaction.")
 
 async def broadcast_spike_alert(app, token: TokenData, spike_pct: float, pro_users: list, free_users: list):
     """Broadcast spike alert to users"""
@@ -139,5 +157,6 @@ def register(app):
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("wallet", wallet))
     app.add_handler(CommandHandler("autotrade", autotrade))
+    app.add_handler(CommandHandler("verify", verify))
     app.add_handler(CallbackQueryHandler(menu, pattern="menu"))
     app.add_handler(CallbackQueryHandler(subscribe, pattern="subscribe"))
