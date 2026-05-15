@@ -8,6 +8,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Force fix for Railway proxy issues
+os.environ['NO_PROXY'] = 'api.telegram.org,telegram.org'
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+
 # ── Solana ────────────────────────────────────────────────────
 SOLANA_RPC_URL   = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 SOLANA_WS_URL    = os.getenv("SOLANA_WS_URL",  "wss://api.mainnet-beta.solana.com")
