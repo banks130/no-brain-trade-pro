@@ -1,191 +1,243 @@
 """
 main.py — No-Brain-Trade Pro
-Production entry point.
-Runs: Scanner + Spike Detector + DeepNet AI + Telegram Bot + Web Dashboard
-All in a single asyncio event loop.
+Entry point with improved error handling for Railway deployment
 """
 
 import asyncio
 import sys
-from datetime import datetime
-from sqlalchemy import select
+import os
+import traceback
 
-# ── Core pipeline ─────────────────────────────────────────────
-from core.scanner import PumpFunScanner
-from core.spike_detector import SpikeDetector
-from core.trending_engine import TrendingEngine
-from core.autotrade import autotrader
+# Set working directory
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# ── AI ────────────────────────────────────────────────────────
-from deepnet_ai.analyzer import deepnet
+print("=== NO-BRAIN-TRADE PRO STARTING ===", flush=True)
+print(f"Python version: {sys.version}", flush=True)
+print(f"Working directory: {os.getcwd()}", flush=True)
 
-# ── Models ────────────────────────────────────────────────────
-from models.token import TokenData
-from models.db import init_db, SessionLocal, User
+# Import with error handling
+try:
+    from datetime import datetime
+    from sqlalchemy import select
+    print("[boot] Core imports OK", flush=True)
+except Exception as e:
+    print(f"[boot] FATAL core import: {e}", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
 
-# ── Bot ───────────────────────────────────────────────────────
-from telegram.ext import Application
-from bot.handlers import register, broadcast_spike_alert
+try:
+    from config import (
+        TELEGRAM_BOT_TOKEN, WEB_HOST, WEB_PORT, SPIKE_THRESHOLD_PCT,
+        DATABASE_URL
+    )
+    print(f"[boot] Config OK | spike threshold: +{SPIKE_THRESHOLD_PCT}%", flush=True)
+    print(f"[boot] Database URL: {DATABASE_URL[:50]}..." if DATABASE_URL else "[boot] No DB URL", flush=True)
+except Exception as e:
+    print(f"[boot] FATAL config: {e}", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
 
-# ── Web ───────────────────────────────────────────────────────
-from web.app import app as fastapi_app, push_to_web
-import uvicorn
+try:
+    from models.token import TokenData
+    from models.db import init_db, SessionLocal, User
+    print("[boot] Models OK", flush=True)
+except Exception as e:
+    print(f"[boot] FATAL models: {e}", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
 
-# ── Utils ─────────────────────────────────────────────────────
-from utils.subscription import expire_subscriptions
-from utils.logger import logger
-from config import (
-    TELEGRAM_BOT_TOKEN, WEB_HOST, WEB_PORT,
-    SPIKE_THRESHOLD_PCT
-)
+try:
+    from core.scanner import PumpFunScanner
+    from core.spike_detector import SpikeDetector
+    from core.trending_engine import TrendingEngine
+    print("[boot] Core pipeline OK", flush=True)
+except Exception as e:
+    print(f"[boot] FATAL core pipeline: {e}", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
+
+try:
+    from deepnet_ai.analyzer import deepnet
+    print("[boot] DeepNet AI OK", flush=True)
+except Exception as e:
+    print(f"[boot] FATAL deepnet: {e}", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
+
+try:
+    from bot.handlers import register, broadcast_spike_alert
+    from telegram.ext import Application
+    print("[boot] Bot handlers OK", flush=True)
+except Exception as e:
+    print(f"[boot] FATAL bot: {e}", flush=True)
+    traceback.print_exc()
+    # Don't exit - bot is optional
+    TELEGRAM_BOT_TOKEN = None
+
+try:
+    from web.app import app as fastapi_app, push_to_web
+    import uvicorn
+    print("[boot] Web OK", flush=True)
+except Exception as e:
+    print(f"[boot] FATAL web: {e}", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
+
+try:
+    from utils.subscription import expire_subscriptions
+    from utils.logger import logger
+    print("[boot] Utils OK", flush=True)
+except Exception as e:
+    print(f"[boot] FATAL utils: {e}", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
 
 # ── Globals ───────────────────────────────────────────────────
-scanner         = PumpFunScanner()
-spike_detector  = SpikeDetector()
-trending_engine = TrendingEngine()
-_analysis_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
-tg_app: Application = None
+scanner = None
+spike_detector = None
+trending_engine = None
+_queue = None
+tg_app = None
 
 
 # ── Scanner callbacks ─────────────────────────────────────────
 
-@scanner.on_new_token
-async def on_new_token(token: TokenData):
-    trending_engine.ingest(token)
-    push_to_web(token, "token")
-    try:
-        _analysis_queue.put_nowait(("fast", token))
-    except asyncio.QueueFull:
-        pass
+def setup_callbacks():
+    global scanner, spike_detector, trending_engine, _queue
+    
+    @scanner.on_new_token
+    async def on_new_token(token: TokenData):
+        trending_engine.ingest(token)
+        push_to_web(token, "token")
+        try:
+            _queue.put_nowait(("fast", token))
+        except asyncio.QueueFull:
+            pass
 
-
-@scanner.on_trade
-async def on_trade(token: TokenData, msg: dict):
-    await spike_detector.process(token)
-    trending_engine.ingest(token)
+    @scanner.on_trade
+    async def on_trade(token: TokenData, msg: dict):
+        await spike_detector.process(token)
+        trending_engine.ingest(token)
 
 
 # ── Spike callback ────────────────────────────────────────────
 
-@spike_detector.on_spike
-async def on_spike(token: TokenData, spike_pct: float):
-    logger.info(f"[spike] ⚡ {token.symbol} +{spike_pct:.0f}%")
-    push_to_web(token, "spike")
-    try:
-        _analysis_queue.put_nowait(("full", token, spike_pct))
-    except asyncio.QueueFull:
-        pass
+def setup_spike_callback():
+    global spike_detector, trending_engine, _queue, tg_app
+    
+    @spike_detector.on_spike
+    async def on_spike(token: TokenData, spike_pct: float):
+        logger.info(f"[spike] ⚡ {token.symbol} +{spike_pct:.0f}%")
+        push_to_web(token, "spike")
+        try:
+            _queue.put_nowait(("full", token, spike_pct))
+        except asyncio.QueueFull:
+            pass
 
 
 # ── Analysis worker ───────────────────────────────────────────
 
 async def analysis_worker():
     while True:
-        job = await _analysis_queue.get()
+        job = await _queue.get()
         try:
-            job_type = job[0]
-
-            if job_type == "fast":
+            if job[0] == "fast":
                 token = await deepnet.analyze(job[1], fast=True)
                 trending_engine.ingest(token)
                 push_to_web(token, "token")
 
-            elif job_type == "full":
+            elif job[0] == "full":
                 token: TokenData = job[1]
                 spike_pct: float = job[2]
-
-                # Full DeepNet analysis
                 token = await deepnet.analyze(token, fast=False)
                 trending_engine.ingest(token)
                 push_to_web(token, "spike")
 
-                # Get user lists for broadcasting
-                free_users, pro_users = await _get_user_lists()
-
-                # Broadcast alert
-                if tg_app:
+                free_users, pro_users = await _get_users()
+                if tg_app and TELEGRAM_BOT_TOKEN:
                     await broadcast_spike_alert(tg_app, token, spike_pct, pro_users, free_users)
 
-                # Auto-trade for Pro users who have it enabled
                 if pro_users:
-                    asyncio.create_task(
-                        _run_autotrades(token, spike_pct, pro_users)
-                    )
+                    asyncio.create_task(_autotrades(token, spike_pct, pro_users))
 
         except Exception as e:
             logger.error(f"[worker] {e}")
+            traceback.print_exc()
         finally:
-            _analysis_queue.task_done()
+            _queue.task_done()
         await asyncio.sleep(0.01)
 
 
-async def _get_user_lists() -> tuple[list[int], list[int]]:
-    """Return (free_user_ids, pro_user_ids) with alerts enabled."""
-    free_users, pro_users = [], []
-    async with SessionLocal() as db:
-        try:
+async def _get_users() -> tuple[list[int], list[int]]:
+    free, pro = [], []
+    try:
+        async with SessionLocal() as db:
             result = await db.execute(
-                select(User).where(User.is_active == True, User.is_banned == False, User.alerts_enabled == True)
+                select(User).where(
+                    User.is_active == True,
+                    User.is_banned == False,
+                    User.alerts_enabled == True,
+                )
             )
-            users = result.scalars().all()
-            for u in users:
-                if u.tier == "pro":
-                    pro_users.append(u.telegram_id)
-                else:
-                    free_users.append(u.telegram_id)
-        except Exception as e:
-            logger.error(f"[users] {e}")
-    return free_users, pro_users
+            for u in result.scalars().all():
+                (pro if u.tier == "pro" else free).append(u.telegram_id)
+    except Exception as e:
+        logger.error(f"[users] {e}")
+    return free, pro
 
 
-async def _run_autotrades(token: TokenData, spike_pct: float, pro_user_ids: list[int]):
-    """Fire auto-trades for all eligible Pro users."""
-    async with SessionLocal() as db:
-        for uid in pro_user_ids:
-            try:
-                should, reason = await autotrader.should_trade(db, uid, token)
-                if should:
-                    from models.db import AutoTradeConfig
-                    from sqlalchemy import select as sel
-                    cfg_r = await db.execute(sel(AutoTradeConfig).where(AutoTradeConfig.telegram_id == uid))
-                    cfg = cfg_r.scalar_one_or_none()
-                    trade_sol = cfg.trade_sol if cfg else 0.1
-                    slippage  = cfg.slippage_bps if cfg else 300
-
-                    tx = await autotrader.execute_buy(db, uid, token, trade_sol, slippage)
+async def _autotrades(token: TokenData, spike_pct: float, pro_ids: list[int]):
+    try:
+        from core.autotrade import autotrader
+        from models.db import AutoTradeConfig
+        async with SessionLocal() as db:
+            for uid in pro_ids:
+                try:
+                    should, reason = await autotrader.should_trade(db, uid, token)
+                    if not should:
+                        continue
+                    result = await db.execute(
+                        select(AutoTradeConfig).where(AutoTradeConfig.telegram_id == uid)
+                    )
+                    cfg = result.scalar_one_or_none()
+                    sol = cfg.trade_sol if cfg else 0.1
+                    slip = cfg.slippage_bps if cfg else 300
+                    tx = await autotrader.execute_buy(db, uid, token, sol, slip)
                     if tx and tg_app:
                         await tg_app.bot.send_message(
                             uid,
-                            f"🤖 *AUTO-BUY*\n\n"
-                            f"`{token.symbol}` | {trade_sol} SOL\n"
-                            f"Spike: +{spike_pct:.0f}%\n"
-                            f"TX: `{tx[:20]}...`\n"
+                            f"🤖 *AUTO-BUY*\n\n`{token.symbol}` | {sol} SOL\n"
+                            f"Spike: +{spike_pct:.0f}%\nTX: `{tx[:20]}...`\n"
                             f"[View](https://solscan.io/tx/{tx})",
                             parse_mode="Markdown",
                             disable_web_page_preview=True,
                         )
-            except Exception as e:
-                logger.error(f"[autotrade] uid={uid}: {e}")
+                except Exception as e:
+                    logger.error(f"[autotrade] uid={uid}: {e}")
+    except ImportError:
+        pass
 
-
-# ── Maintenance tasks ─────────────────────────────────────────
 
 async def maintenance_loop():
-    """Expire subs, prune trending, run housekeeping every 5 min."""
     while True:
         await asyncio.sleep(300)
         try:
             async with SessionLocal() as db:
                 await expire_subscriptions(db)
+            if spike_detector:
+                await spike_detector.cleanup_old_tokens()
         except Exception as e:
             logger.error(f"[maintenance] {e}")
 
 
-# ── Web server ────────────────────────────────────────────────
-
 async def run_web():
-    config = uvicorn.Config(fastapi_app, host=WEB_HOST, port=WEB_PORT,
-                            log_level="warning", access_log=False)
+    config = uvicorn.Config(
+        fastapi_app,
+        host=WEB_HOST,
+        port=WEB_PORT,
+        log_level="warning",
+        access_log=False,
+    )
     server = uvicorn.Server(config)
     await server.serve()
 
@@ -193,47 +245,63 @@ async def run_web():
 # ── Main ──────────────────────────────────────────────────────
 
 async def main():
-    global tg_app
+    global scanner, spike_detector, trending_engine, _queue, tg_app
 
-    logger.info("=" * 50)
-    logger.info("  NO-BRAIN-TRADE PRO — Starting")
-    logger.info(f"  Spike threshold: +{SPIKE_THRESHOLD_PCT}%")
-    logger.info("=" * 50)
-
-    # Init database
+    print("[main] Initializing components...", flush=True)
+    
+    # Initialize database
+    print("[main] Initializing DB...", flush=True)
     await init_db()
-    logger.info("[db] Database ready")
+    print("[main] DB ready", flush=True)
+    
+    # Initialize core components
+    scanner = PumpFunScanner()
+    spike_detector = SpikeDetector()
+    trending_engine = TrendingEngine()
+    _queue = asyncio.Queue(maxsize=500)
+    
+    # Setup callbacks
+    setup_callbacks()
+    setup_spike_callback()
 
-    # Init Telegram bot
-    if TELEGRAM_BOT_TOKEN:
-        tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-        register(tg_app)
-        await tg_app.initialize()
-        await tg_app.start()
-        await tg_app.updater.start_polling(drop_pending_updates=True)
-        logger.info("[bot] Telegram bot started")
+    # Initialize Telegram bot if token available
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != "":
+        print("[main] Starting Telegram bot...", flush=True)
+        try:
+            tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+            register(tg_app)
+            await tg_app.initialize()
+            await tg_app.start()
+            await tg_app.updater.start_polling(drop_pending_updates=True)
+            print("[main] Telegram bot running ✓", flush=True)
+        except Exception as e:
+            print(f"[main] WARNING: Telegram bot failed: {e}", flush=True)
+            tg_app = None
     else:
-        logger.warning("[bot] No TELEGRAM_BOT_TOKEN — bot disabled")
+        print("[main] WARNING: No TELEGRAM_BOT_TOKEN set", flush=True)
+        tg_app = None
 
-    # Start all tasks
+    print(f"[main] Starting web on port {WEB_PORT}...", flush=True)
+    print(f"[main] Starting scanner...", flush=True)
+
     tasks = [
-        asyncio.create_task(scanner.run(),              name="scanner"),
-        asyncio.create_task(analysis_worker(),           name="analysis"),
-        asyncio.create_task(trending_engine.run_loop(),  name="trending"),
-        asyncio.create_task(maintenance_loop(),           name="maintenance"),
-        asyncio.create_task(run_web(),                   name="web"),
+        asyncio.create_task(scanner.run(), name="scanner"),
+        asyncio.create_task(analysis_worker(), name="analysis"),
+        asyncio.create_task(trending_engine.run_loop(), name="trending"),
+        asyncio.create_task(maintenance_loop(), name="maintenance"),
+        asyncio.create_task(run_web(), name="web"),
     ]
 
-    logger.info(f"[web] Dashboard: http://{WEB_HOST}:{WEB_PORT}")
-    logger.info("[main] All systems running ✓")
+    print("[main] All systems go ✓", flush=True)
 
     try:
         await asyncio.gather(*tasks)
     except Exception as e:
         logger.error(f"[main] Fatal: {e}")
+        traceback.print_exc()
     finally:
-        logger.info("[main] Shutting down...")
-        scanner.stop()
+        if scanner:
+            scanner.stop()
         if tg_app:
             await tg_app.updater.stop()
             await tg_app.stop()
@@ -247,5 +315,9 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nShutdown.")
+        print("Shutdown.")
         sys.exit(0)
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        traceback.print_exc()
+        sys.exit(1)
