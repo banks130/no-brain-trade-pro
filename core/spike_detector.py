@@ -6,7 +6,7 @@ core/spike_detector.py — No-Brain-Trade Pro
 import asyncio
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
-from typing import Callable
+from typing import Callable, List, Tuple
 from models.token import TokenData
 from config import (
     SPIKE_THRESHOLD_PCT, SPIKE_WINDOW_SECONDS,
@@ -58,13 +58,26 @@ class SpikeDetector:
             return False
         return True
 
-    def get_history(self, mint: str) -> list:
+    def get_history(self, mint: str) -> List[Tuple[datetime, float]]:
         return list(self._history.get(mint, []))
 
     async def _call(self, fn, *args):
         try:
-            r = fn(*args)
-            if asyncio.iscoroutine(r):
-                await r
+            if asyncio.iscoroutinefunction(fn):
+                r = await fn(*args)
+            else:
+                r = fn(*args)
+            return r
         except Exception as e:
             logger.error(f"[spike] cb error: {e}")
+            
+    async def cleanup_old_tokens(self, max_age_hours: int = 24):
+        """Clean up old token history to prevent memory leaks"""
+        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        to_remove = [mint for mint, history in self._history.items() 
+                    if history and history[-1][0] < cutoff]
+        for mint in to_remove:
+            del self._history[mint]
+            self._flagged.discard(mint)
+        if to_remove:
+            logger.info(f"[spike] Cleaned {len(to_remove)} old tokens")
