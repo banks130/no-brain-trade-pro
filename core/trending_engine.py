@@ -1,59 +1,43 @@
-"""
-core/trending_engine.py — No-Brain-Trade Pro
-Live token ranking by momentum score.
-"""
-
-import asyncio
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
-from typing import Optional
 from models.token import TokenData
-from config import TRENDING_TOP_N
+from config import TRENDING_WINDOW_MINUTES, TRENDING_TOP_N
 from utils.logger import logger
-
 
 class TrendingEngine:
     def __init__(self):
-        self._tokens: dict[str, TokenData] = {}
-        self._scores: dict[str, float] = {}
+        self._scores: dict[str, float] = defaultdict(float)
+        self._history: dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
+        self._running = True
 
     def ingest(self, token: TokenData):
-        self._tokens[token.mint] = token
-        self._scores[token.mint] = self._score(token)
+        mint = token.mint
+        self._history[mint].append((datetime.utcnow(), token.price_sol, token.volume_24h_usd))
+        self._update_score(token)
 
-    def _score(self, token: TokenData) -> float:
-        spike  = min(token.spike_pct / 500, 1.0) * 40
-        vol    = min(token.volume_5m_usd / 50_000, 1.0) * 25
-        sent   = ((token.sentiment_score + 1) / 2) * 15
-        safety = (token.safety_score / 100) * 20
-        if token.is_rugpull_risk:
-            safety = 0
-        if token.dev_sold:
-            safety *= 0.3
-        return spike + vol + sent + safety
+    def _update_score(self, token: TokenData):
+        score = 0.0
+        if token.spike_pct > 100:
+            score += token.spike_pct / 100
+        if token.volume_24h_usd > 10000:
+            score += token.volume_24h_usd / 100000
+        if token.liquidity_sol > 50:
+            score += token.liquidity_sol / 100
+        self._scores[token.mint] = score
 
-    def get_trending(self, n: int = TRENDING_TOP_N) -> list[TokenData]:
-        ranked = sorted(self._scores, key=self._scores.get, reverse=True)[:n]
-        for i, mint in enumerate(ranked, 1):
-            self._tokens[mint].trending_rank = i
-        return [self._tokens[m] for m in ranked]
+    def get_trending(self, top_n: int = TRENDING_TOP_N):
+        sorted_tokens = sorted(self._scores.items(), key=lambda x: x[1], reverse=True)
+        return [mint for mint, score in sorted_tokens[:top_n]]
 
-    def get(self, mint: str) -> Optional[TokenData]:
-        return self._tokens.get(mint)
+    async def run_loop(self):
+        while self._running:
+            await asyncio.sleep(60)
+            self._cleanup()
 
-    def prune(self, max_age_minutes: int = 30):
-        cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
-        stale = [m for m, t in self._tokens.items() if t.last_updated < cutoff]
-        for m in stale:
-            self._tokens.pop(m, None)
-            self._scores.pop(m, None)
-
-    async def run_loop(self, interval: int = 10):
-        while True:
-            await asyncio.sleep(interval)
-            for mint, token in self._tokens.items():
-                self._scores[mint] = self._score(token)
-            self.prune()
-
-    @property
-    def total_tracked(self) -> int:
-        return len(self._tokens)
+    def _cleanup(self):
+        cutoff = datetime.utcnow() - timedelta(minutes=TRENDING_WINDOW_MINUTES)
+        to_remove = [mint for mint, history in self._history.items() 
+                    if history and history[-1][0] < cutoff]
+        for mint in to_remove:
+            del self._history[mint]
+            self._scores.pop(mint, None)
