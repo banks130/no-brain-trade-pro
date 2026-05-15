@@ -1,8 +1,3 @@
-"""
-main.py — No-Brain-Trade Pro
-Entry point with improved error handling
-"""
-
 import asyncio
 import sys
 import os
@@ -13,7 +8,6 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 print("=== NO-BRAIN-TRADE PRO STARTING ===", flush=True)
 print(f"Python version: {sys.version}", flush=True)
 
-# Import with error handling
 try:
     from datetime import datetime
     from sqlalchemy import select
@@ -79,7 +73,6 @@ except Exception as e:
     import logging
     logger = logging.getLogger(__name__)
 
-# Globals
 scanner = None
 spike_detector = None
 trending_engine = None
@@ -97,6 +90,7 @@ async def analysis_worker():
                     token = job[1]
                 trending_engine.ingest(token)
                 push_to_web(token, "token")
+                print(f"[worker] Processed token: {token.symbol}")
             elif job[0] == "full":
                 token = job[1]
                 spike_pct = job[2]
@@ -104,8 +98,10 @@ async def analysis_worker():
                     token = await deepnet.analyze(token, fast=False)
                 trending_engine.ingest(token)
                 push_to_web(token, "spike")
+                print(f"[worker] 🚀 SPIKE: {token.symbol} +{spike_pct:.0f}%")
                 if tg_app and broadcast_spike_alert:
-                    await broadcast_spike_alert(tg_app, token, spike_pct, [], [])
+                    free_users, pro_users = [], []
+                    await broadcast_spike_alert(tg_app, token, spike_pct, pro_users, free_users)
         except Exception as e:
             logger.error(f"[worker] {e}")
         finally:
@@ -124,6 +120,7 @@ async def main():
     
     @scanner.on_new_token
     async def on_new_token(token: TokenData):
+        print(f"[scanner] 🆕 NEW TOKEN: {token.symbol} (${token.price_sol:.8f} SOL)")
         trending_engine.ingest(token)
         push_to_web(token, "token")
         try:
@@ -138,18 +135,19 @@ async def main():
 
     @spike_detector.on_spike
     async def on_spike(token: TokenData, spike_pct: float):
-        logger.info(f"[spike] ⚡ {token.symbol} +{spike_pct:.0f}%")
+        print(f"[spike] ⚡⚡⚡ REAL SPIKE: {token.symbol} +{spike_pct:.0f}% ⚡⚡⚡")
         push_to_web(token, "spike")
         try:
             _queue.put_nowait(("full", token, spike_pct))
         except asyncio.QueueFull:
             pass
 
-    if TELEGRAM_BOT_TOKEN:
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != "":
         print("[main] Starting Telegram bot...", flush=True)
         try:
             tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-            register(tg_app)
+            if register:
+                register(tg_app)
             await tg_app.initialize()
             await tg_app.start()
             await tg_app.updater.start_polling()
@@ -164,6 +162,7 @@ async def main():
     ]
     
     print("[main] All systems go ✓", flush=True)
+    print("[main] Waiting for real pump.fun tokens...", flush=True)
     
     try:
         await asyncio.gather(*tasks)
@@ -171,7 +170,7 @@ async def main():
         logger.error(f"[main] Fatal: {e}")
 
 async def run_web():
-    config = uvicorn.Config(fastapi_app, host=WEB_HOST, port=WEB_PORT, log_level="warning")
+    config = uvicorn.Config(fastapi_app, host=WEB_HOST, port=WEB_PORT, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()
 
