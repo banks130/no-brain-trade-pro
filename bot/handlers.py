@@ -53,9 +53,9 @@ async def cmd_test(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Test command received from {user.id}")
         print(f"Test command from {user.id}")
         await update.message.reply_text(
-            "✅ *Bot is working!*\n\n"
+            "✅ <b>Bot is working!</b>\n\n"
             "Send /menu to get started with No-Brain-Trade Pro.",
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.HTML
         )
         print(f"Test command succeeded for {user.id}")
     except Exception as e:
@@ -73,14 +73,14 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await get_or_create_user(db, user.id, user.username, user.first_name)
 
     text = (
-        "⚡ *NO-BRAIN-TRADE*\n"
+        "⚡ <b>NO-BRAIN-TRADE</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "Real-time pump\\.fun intelligence\\.\n\n"
-        "🆓 *Free* — Spike alerts \\(150%\\+\\)\n"
-        "💎 *Pro* — Full AI analysis \\+ Auto\\-trade\n\n"
-        "Use /menu to get started\\."
+        "Real-time pump.fun intelligence.\n\n"
+        "🆓 <b>Free</b> — Spike alerts (150%+)\n"
+        "💎 <b>Pro</b> — Full AI analysis + Auto-trade\n\n"
+        "Use /menu to get started."
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 # ── /menu ─────────────────────────────────────────────────────
@@ -106,8 +106,8 @@ async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ],
     ]
     await update.message.reply_text(
-        f"*NO-BRAIN-TRADE* | {tier_badge}",
-        parse_mode=ParseMode.MARKDOWN,
+        f"<b>NO-BRAIN-TRADE</b> | {tier_badge}",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(kb),
     )
 
@@ -126,25 +126,25 @@ async def cb_sub_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if pro and sub:
         days_left = (sub.expires_at - datetime.utcnow()).days
         text = (
-            f"💎 *PRO ACTIVE*\n\n"
-            f"Expires: `{sub.expires_at.strftime('%Y-%m-%d')}`\n"
-            f"Days left: `{days_left}`\n\n"
+            f"💎 <b>PRO ACTIVE</b>\n\n"
+            f"Expires: <code>{sub.expires_at.strftime('%Y-%m-%d')}</code>\n"
+            f"Days left: <code>{days_left}</code>\n\n"
             f"Auto-trade + full AI analysis enabled."
         )
         kb = [[InlineKeyboardButton("🔄 Renew", callback_data="sub_pay")]]
     else:
         text = (
-            f"💎 *GO PRO*\n\n"
-            f"Price: `{PRO_PRICE_SOL} SOL / month`\n\n"
+            f"💎 <b>GO PRO</b>\n\n"
+            f"Price: <code>{PRO_PRICE_SOL} SOL / month</code>\n\n"
             f"✅ Full DeepNet AI analysis\n"
             f"✅ Auto-trade on every spike\n"
             f"✅ Bundle + whale detection\n"
             f"✅ Dev safety scoring\n\n"
-            f"Tap *Subscribe* to get your payment address."
+            f"Tap Subscribe to get your payment address."
         )
         kb = [[InlineKeyboardButton("💳 Subscribe Now", callback_data="sub_pay")]]
 
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML,
                                    reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -153,15 +153,15 @@ async def cb_sub_pay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     text = (
-        f"💳 *PAYMENT INSTRUCTIONS*\n\n"
-        f"Send exactly `{PRO_PRICE_SOL} SOL` to:\n\n"
-        f"`{TREASURY_WALLET}`\n\n"
+        f"💳 <b>PAYMENT INSTRUCTIONS</b>\n\n"
+        f"Send exactly <code>{PRO_PRICE_SOL} SOL</code> to:\n\n"
+        f"<code>{TREASURY_WALLET}</code>\n\n"
         f"Then send your transaction signature here with:\n"
-        f"`/verify <TX_SIGNATURE>`\n\n"
+        f"<code>/verify &lt;TX_SIGNATURE&gt;</code>\n\n"
         f"⏳ Subscription activates within 1 minute of confirmation."
     )
     kb = [[InlineKeyboardButton("◀️ Back", callback_data="sub_info")]]
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML,
                                    reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -170,7 +170,7 @@ async def cmd_verify(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = ctx.args
     if not args:
-        await update.message.reply_text("Usage: `/verify <TX_SIGNATURE>`", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text("Usage: <code>/verify &lt;TX_SIGNATURE&gt;</code>", parse_mode=ParseMode.HTML)
         return
 
     tx_sig = args[0].strip()
@@ -181,11 +181,11 @@ async def cmd_verify(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         async with SessionLocal() as db:
             await activate_pro(db, user.id, tx_sig)
         await msg.edit_text(
-            f"✅ *PRO ACTIVATED!*\n\n"
+            f"✅ <b>PRO ACTIVATED!</b>\n\n"
             f"Welcome to No-Brain-Trade Pro.\n"
             f"Valid for {PRO_DURATION_DAYS} days.\n\n"
             f"Use /menu → Auto-Trade to configure your bot.",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         # Notify admin
         if ADMIN_CHAT_ID:
@@ -217,12 +217,12 @@ async def cb_wallet_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("◀️ Back", callback_data="menu")],
     ]
     await query.edit_message_text(
-        f"👜 *YOUR WALLET*\n\n"
-        f"Address:\n`{wallet.public_key}`\n\n"
-        f"Balance: `{balance:.4f} SOL`\n\n"
+        f"👜 <b>YOUR WALLET</b>\n\n"
+        f"Address:\n<code>{wallet.public_key}</code>\n\n"
+        f"Balance: <code>{balance:.4f} SOL</code>\n\n"
         f"ℹ️ Fund this wallet with SOL to enable auto-trading.\n"
         f"You own the private key — funds are always yours.",
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(kb),
     )
 
@@ -241,11 +241,11 @@ async def cb_wallet_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     kb = [[InlineKeyboardButton("◀️ Back", callback_data="wallet_info")]]
     await query.edit_message_text(
-        f"🔑 *PRIVATE KEY*\n\n"
-        f"`{private_b58}`\n\n"
+        f"🔑 <b>PRIVATE KEY</b>\n\n"
+        f"<code>{private_b58}</code>\n\n"
         f"⚠️ NEVER share this. Import into Phantom or Solflare.\n"
         f"Delete this message after saving.",
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(kb),
     )
 
@@ -261,8 +261,8 @@ async def cb_at_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         pro = await is_pro(db, user.id)
         if not pro:
             await query.edit_message_text(
-                "💎 *Pro required*\n\nAuto-trade is a Pro feature.",
-                parse_mode=ParseMode.MARKDOWN,
+                "💎 <b>Pro required</b>\n\nAuto-trade is a Pro feature.",
+                parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("Subscribe", callback_data="sub_info")
                 ]])
@@ -303,15 +303,15 @@ async def cb_at_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("◀️ Back", callback_data="menu")],
     ]
     await query.edit_message_text(
-        f"⚙️ *AUTO-TRADE* | {status}\n\n"
-        f"Trade size: `{cfg.trade_sol} SOL`\n"
-        f"Slippage: `{cfg.slippage_bps/100:.1f}%`\n"
-        f"Min spike: `{cfg.min_spike_pct:.0f}%`\n"
-        f"Min safety score: `{cfg.min_safety_score}`\n"
-        f"Take profit: `+{cfg.take_profit_pct:.0f}%`\n"
-        f"Stop loss: `{cfg.stop_loss_pct:.0f}%`\n"
-        f"Daily limit: `{cfg.max_trades_day} trades`",
-        parse_mode=ParseMode.MARKDOWN,
+        f"⚙️ <b>AUTO-TRADE</b> | {status}\n\n"
+        f"Trade size: <code>{cfg.trade_sol} SOL</code>\n"
+        f"Slippage: <code>{cfg.slippage_bps/100:.1f}%</code>\n"
+        f"Min spike: <code>{cfg.min_spike_pct:.0f}%</code>\n"
+        f"Min safety score: <code>{cfg.min_safety_score}</code>\n"
+        f"Take profit: <code>+{cfg.take_profit_pct:.0f}%</code>\n"
+        f"Stop loss: <code>{cfg.stop_loss_pct:.0f}%</code>\n"
+        f"Daily limit: <code>{cfg.max_trades_day} trades</code>",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(kb),
     )
 
@@ -345,20 +345,20 @@ async def cb_my_trades(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         trades = result.scalars().all()
 
     if not trades:
-        text = "📊 *MY TRADES*\n\nNo trades yet."
+        text = "📊 <b>MY TRADES</b>\n\nNo trades yet."
     else:
-        lines = ["📊 *MY TRADES* (last 10)\n"]
+        lines = ["📊 <b>MY TRADES</b> (last 10)\n"]
         for t in trades:
             icon = "🟢" if t.action == "buy" else "🔴"
             pnl = f" | PnL: {t.pnl_pct:+.0f}%" if t.pnl_pct else ""
             lines.append(
-                f"{icon} `{t.symbol}` {t.action.upper()} {t.sol_amount:.3f}SOL"
-                f"{pnl}\n`{t.created_at.strftime('%m/%d %H:%M')}`"
+                f"{icon} <code>{t.symbol}</code> {t.action.upper()} {t.sol_amount:.3f}SOL"
+                f"{pnl}\n<code>{t.created_at.strftime('%m/%d %H:%M')}</code>"
             )
         text = "\n".join(lines)
 
     kb = [[InlineKeyboardButton("◀️ Back", callback_data="menu")]]
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML,
                                    reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -383,11 +383,11 @@ async def cb_alert_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("◀️ Back", callback_data="menu")],
     ]
     await query.edit_message_text(
-        f"🔔 *ALERT SETTINGS*\n\n"
+        f"🔔 <b>ALERT SETTINGS</b>\n\n"
         f"Alerts: {status}\n"
-        f"Min spike: `{u.min_spike_pct:.0f}%`\n"
-        f"Min safety: `{u.min_safety_score}`",
-        parse_mode=ParseMode.MARKDOWN,
+        f"Min spike: <code>{u.min_spike_pct:.0f}%</code>\n"
+        f"Min safety: <code>{u.min_safety_score}</code>",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(kb),
     )
 
@@ -412,26 +412,22 @@ async def cb_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     text = (
-        "ℹ️ *HELP*\n\n"
-        "`/start` — Start the bot\n"
-        "`/menu` — Main menu\n"
-        "`/test` — Test if bot is working\n"
-        "`/verify <TX>` — Verify Pro payment\n\n"
-        "*Free:* Spike alerts when tokens pump 150%+\n\n"
-        "*Pro:* Full AI analysis with each alert + "
+        "ℹ️ <b>HELP</b>\n\n"
+        "<code>/start</code> — Start the bot\n"
+        "<code>/menu</code> — Main menu\n"
+        "<code>/test</code> — Test if bot is working\n"
+        "<code>/verify &lt;TX&gt;</code> — Verify Pro payment\n\n"
+        "<b>Free:</b> Spike alerts when tokens pump 150%+\n\n"
+        "<b>Pro:</b> Full AI analysis with each alert + "
         "auto-trade using your own wallet.\n\n"
         "Your wallet is non-custodial — only you hold the keys."
     )
     kb = [[InlineKeyboardButton("◀️ Back", callback_data="menu")]]
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML,
                                    reply_markup=InlineKeyboardMarkup(kb))
 
 
 # ── Menu router ───────────────────────────────────────────────
-
-async def cb_menu_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await cmd_menu.__wrapped__(update, ctx) if hasattr(cmd_menu, '__wrapped__') else await _menu_msg(update, ctx)
-
 
 async def _menu_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -454,8 +450,8 @@ async def _menu_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ],
     ]
     await query.edit_message_text(
-        f"*NO-BRAIN-TRADE* | {tier_badge}",
-        parse_mode=ParseMode.MARKDOWN,
+        f"<b>NO-BRAIN-TRADE</b> | {tier_badge}",
+        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(kb),
     )
 
@@ -475,24 +471,24 @@ async def broadcast_spike_alert(
     """
     # Free alert
     free_text = (
-        f"⚡ *SPIKE ALERT*\n\n"
-        f"*{token.name}* (`{token.symbol}`)\n"
-        f"`{token.mint}`\n\n"
-        f"📊 Spike: *+{spike_pct:.0f}%*\n"
+        f"⚡ <b>SPIKE ALERT</b>\n\n"
+        f"<b>{token.name}</b> (<code>{token.symbol}</code>)\n"
+        f"<code>{token.mint}</code>\n\n"
+        f"📊 Spike: <b>+{spike_pct:.0f}%</b>\n"
         f"💧 Liq: {token.liquidity_sol:.1f} SOL\n\n"
-        f"[DexScreener](https://dexscreener.com/solana/{token.mint}) | "
-        f"[Pump.fun](https://pump.fun/{token.mint})\n\n"
-        f"_💎 Upgrade to Pro for full AI analysis_"
+        f"<a href='https://dexscreener.com/solana/{token.mint}'>DexScreener</a> | "
+        f"<a href='https://pump.fun/{token.mint}'>Pump.fun</a>\n\n"
+        f"<i>💎 Upgrade to Pro for full AI analysis</i>"
     )
 
     # Pro alert (full DeepNet data)
     risk_emoji = "✅" if token.safety_score >= 70 else "⚠️" if token.safety_score >= 40 else "🚩"
-    tags_str = " ".join(f"`{t}`" for t in token.tags[:4]) if token.tags else "—"
+    tags_str = " ".join(f"<code>{t}</code>" for t in token.tags[:4]) if token.tags else "—"
     pro_text = (
-        f"⚡ *SPIKE ALERT* | 🧠 DeepNet\n\n"
-        f"*{token.name}* (`{token.symbol}`)\n"
-        f"`{token.mint}`\n\n"
-        f"📊 Spike: *+{spike_pct:.0f}%*\n"
+        f"⚡ <b>SPIKE ALERT</b> | 🧠 DeepNet\n\n"
+        f"<b>{token.name}</b> (<code>{token.symbol}</code>)\n"
+        f"<code>{token.mint}</code>\n\n"
+        f"📊 Spike: <b>+{spike_pct:.0f}%</b>\n"
         f"💧 Liq: {token.liquidity_sol:.1f} SOL\n"
         f"📦 Vol 5m: ${format_number(token.volume_5m_usd)}\n"
         f"👥 Holders: {token.holder_count}\n"
@@ -501,15 +497,15 @@ async def broadcast_spike_alert(
         f"🐋 Smart Money: {'Yes' if token.smart_money_flag else 'No'}\n"
         f"🔑 Auth Revoked: {'Yes' if token.mint_authority_revoked else 'No'}\n"
         f"🏷 Tags: {tags_str}\n\n"
-        f"[DexScreener](https://dexscreener.com/solana/{token.mint}) | "
-        f"[Pump.fun](https://pump.fun/{token.mint})"
+        f"<a href='https://dexscreener.com/solana/{token.mint}'>DexScreener</a> | "
+        f"<a href='https://pump.fun/{token.mint}'>Pump.fun</a>"
     )
 
     # Send to free users
     for uid in free_users:
         try:
             await app.bot.send_message(
-                uid, free_text, parse_mode=ParseMode.MARKDOWN,
+                uid, free_text, parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True
             )
         except Exception:
@@ -519,7 +515,7 @@ async def broadcast_spike_alert(
     for uid in pro_users:
         try:
             await app.bot.send_message(
-                uid, pro_text, parse_mode=ParseMode.MARKDOWN,
+                uid, pro_text, parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True
             )
         except Exception:
