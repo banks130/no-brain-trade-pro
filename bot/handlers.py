@@ -2,14 +2,10 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 from datetime import datetime
 from models.token import TokenData
-from models.db import User, UserWallet, AutoTradeConfig, get_db
-from utils.subscription import verify_payment, activate_subscription, check_subscription
-from utils.wallet import generate_keypair, encrypt_private_key
+from models.db import User, get_db
 from utils.logger import logger
 
-# Hardcoded values
 TREASURY_WALLET = "9xYzJYqJQh3xLvZ5XrWnMk2PqRt7YbVcNm4LkHgFdWp"
-PRO_PRICE_SOL = 0.5
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -23,117 +19,84 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await db.commit()
     
     await update.message.reply_text(
-        "⚡ *NO-BRAIN-TRADE PRO*\n\n"
-        "Free spike alerts (150%+) + Pro AI analysis\n\n"
-        "/menu - Main menu\n"
-        "/subscribe - Upgrade to Pro\n"
-        "/wallet - Your trading wallet\n"
-        "/verify <TX> - Verify payment",
+        "⚡ *NO-BRAIN-TRADE PRO* ⚡\n\n"
+        "Real-time pump.fun spike detection\n"
+        "Free 150%+ spike alerts\n\n"
+        "*/menu* - Main menu\n"
+        "*/status* - Bot status\n"
+        "*/wallet* - Your wallet\n\n"
+        "🚀 Bot is live and watching for spikes!",
         parse_mode="Markdown"
     )
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("📊 Pro Status", callback_data="status")],
-        [InlineKeyboardButton("💳 Subscribe Pro", callback_data="subscribe")],
-        [InlineKeyboardButton("👛 My Wallet", callback_data="wallet")],
-        [InlineKeyboardButton("🤖 Auto-Trade", callback_data="autotrade")],
+        [InlineKeyboardButton("📊 Status", callback_data="status")],
+        [InlineKeyboardButton("👛 Wallet", callback_data="wallet")],
+        [InlineKeyboardButton("ℹ️ Info", callback_data="info")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Main Menu:", reply_markup=reply_markup)
+    await update.message.reply_text("📱 *Main Menu*", parse_mode="Markdown", reply_markup=reply_markup)
 
-async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton(f"1 Month - {PRO_PRICE_SOL} SOL", callback_data="sub_1")],
-        [InlineKeyboardButton(f"3 Months - {PRO_PRICE_SOL * 2.4} SOL", callback_data="sub_3")],
-        [InlineKeyboardButton(f"6 Months - {PRO_PRICE_SOL * 4} SOL", callback_data="sub_6")],
-        [InlineKeyboardButton("🔙 Back", callback_data="menu")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    tier = "Free"
+    
+    async for db in get_db():
+        user = await db.get(User, user_id)
+        if user and user.tier == "pro":
+            tier = "Pro ✅"
+    
     await update.message.reply_text(
-        f"💰 *Pro Subscription*\n\n"
-        f"Price: {PRO_PRICE_SOL} SOL/month\n\n"
-        f"Send SOL to:\n`{TREASURY_WALLET}`\n\n"
-        f"Then /verify <TX_SIGNATURE>",
-        parse_mode="Markdown",
-        reply_markup=reply_markup
+        f"📊 *Your Status*\n\n"
+        f"User: @{update.effective_user.username}\n"
+        f"Tier: {tier}\n"
+        f"Bot: 🟢 Active\n\n"
+        f"Spike threshold: 150%\n"
+        f"Monitoring: pump.fun",
+        parse_mode="Markdown"
     )
 
 async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    async for db in get_db():
-        wallet = await db.get(UserWallet, user_id)
-        
-        if not wallet:
-            priv_key, pub_key = generate_keypair()
-            if priv_key:
-                encrypted = encrypt_private_key(priv_key)
-                new_wallet = UserWallet(
-                    telegram_id=user_id,
-                    public_key=pub_key,
-                    encrypted_private_key=encrypted
-                )
-                db.add(new_wallet)
-                await db.commit()
-                wallet = new_wallet
-        
-        if wallet:
-            await update.message.reply_text(
-                f"👛 *Your Wallet*\n\n"
-                f"Public Key:\n`{wallet.public_key}`\n\n"
-                f"Send SOL here to fund auto-trading.",
-                parse_mode="Markdown"
-            )
-        else:
-            await update.message.reply_text("Failed to create wallet. Please try again.")
+    await update.message.reply_text(
+        f"👛 *Your Wallet Info*\n\n"
+        f"Treasury: `{TREASURY_WALLET}`\n\n"
+        f"Coming soon: Personal trading wallet",
+        parse_mode="Markdown"
+    )
 
-async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not context.args:
-        await update.message.reply_text("Usage: /verify <TX_SIGNATURE>")
-        return
-    
-    tx_signature = context.args[0]
-    
-    if await verify_payment(tx_signature, PRO_PRICE_SOL):
-        await activate_subscription(user_id, 1)
-        await update.message.reply_text("✅ Pro activated! You now have full access.")
-    else:
-        await update.message.reply_text("❌ Verification failed. Please check transaction.")
-
-async def autotrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    async for db in get_db():
-        config = await db.get(AutoTradeConfig, user_id)
-        
-        if not config:
-            config = AutoTradeConfig(telegram_id=user_id)
-            db.add(config)
-            await db.commit()
-        
-        status = "✅ ENABLED" if config.enabled else "❌ DISABLED"
-        await update.message.reply_text(
-            f"🤖 *Auto-Trade Config*\n\n"
-            f"Status: {status}\n"
-            f"Trade amount: {config.trade_sol} SOL\n"
-            f"Slippage: {config.slippage_bps/100}%\n",
-            parse_mode="Markdown"
-        )
+async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "ℹ️ *No-Brain-Trade Pro*\n\n"
+        "• Free spike alerts at 150%+\n"
+        "• Pro tier: AI analysis + auto-trading\n"
+        "• Non-custodial - you control keys\n\n"
+        "Contact @admin for Pro access",
+        parse_mode="Markdown"
+    )
 
 async def broadcast_spike_alert(app, token: TokenData, spike_pct: float, pro_users: list, free_users: list):
     """Broadcast spike alert to users"""
     message = (
-        f"🚨 *SPIKE ALERT!*\n\n"
-        f"Token: *{token.symbol}*\n"
-        f"Price: {token.price_sol:.8f} SOL\n"
-        f"Spike: +{spike_pct:.1f}%\n"
+        f"🚨 *SPIKE ALERT!* 🚨\n\n"
+        f"💰 *{token.symbol}* ({token.name})\n"
+        f"📈 Price: `{token.price_sol:.8f} SOL`\n"
+        f"⚡ Spike: *+{spike_pct:.0f}%*\n"
+        f"🔗 [View on DexScreener](https://dexscreener.com/solana/{token.mint})"
     )
     
-    for user_id in free_users + pro_users:
+    # Send to all users (limit to avoid rate limits)
+    all_users = list(set(free_users + pro_users))[:100]  # Max 100 per spike
+    
+    for user_id in all_users:
         try:
-            await app.bot.send_message(user_id, message, parse_mode="Markdown")
+            await app.bot.send_message(
+                user_id, 
+                message, 
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+            await asyncio.sleep(0.05)  # Small delay to avoid rate limits
         except Exception as e:
             logger.error(f"Failed to send to {user_id}: {e}")
 
@@ -141,9 +104,10 @@ def register(app):
     """Register all handlers"""
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
-    app.add_handler(CommandHandler("subscribe", subscribe))
+    app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("wallet", wallet))
-    app.add_handler(CommandHandler("verify", verify))
-    app.add_handler(CommandHandler("autotrade", autotrade))
-    app.add_handler(CallbackQueryHandler(menu, pattern="menu"))
-    app.add_handler(CallbackQueryHandler(subscribe, pattern="subscribe"))
+    app.add_handler(CommandHandler("info", info))
+    app.add_handler(CallbackQueryHandler(lambda u,c: menu(u,c), pattern="menu"))
+    app.add_handler(CallbackQueryHandler(lambda u,c: status(u,c), pattern="status"))
+    app.add_handler(CallbackQueryHandler(lambda u,c: wallet(u,c), pattern="wallet"))
+    app.add_handler(CallbackQueryHandler(lambda u,c: info(u,c), pattern="info"))
