@@ -43,9 +43,10 @@ DEFAULT_SLIPPAGE_BPS = int(os.getenv("DEFAULT_SLIPPAGE_BPS", "300"))
 SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 SOLANA_WSS_URL = os.getenv("SOLANA_WSS_URL", "wss://api.mainnet-beta.solana.com")
 
-# ===== TRENDING =====
+# ===== TRENDING ENGINE =====
 TRENDING_WINDOW_MINUTES = int(os.getenv("TRENDING_WINDOW_MINUTES", "15"))
 TRENDING_TOP_K = int(os.getenv("TRENDING_TOP_K", "50"))
+TRENDING_TOP_N = int(os.getenv("TRENDING_TOP_N", "20"))  # ← This was missing
 
 # ===== AI =====
 DEEPNET_ENABLED = os.getenv("DEEPNET_ENABLED", "true").lower() == "true"
