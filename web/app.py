@@ -1,13 +1,19 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sse_starlette.sse import EventSourceResponse
-from typing import List, Dict
-from models.token import TokenData
-from models.db import get_db, TokenCache
 import asyncio
 from datetime import datetime
+from typing import List
+from models.token import TokenData
 import json
+
+# Try to import sse-starlette, fallback to simple implementation
+try:
+    from sse_starlette.sse import EventSourceResponse
+    SSE_AVAILABLE = True
+except ImportError:
+    SSE_AVAILABLE = False
+    print("[web] sse-starlette not available, using fallback")
 
 app = FastAPI(title="No-Brain-Trade Pro")
 
@@ -50,7 +56,15 @@ async def events():
             except asyncio.TimeoutError:
                 yield {"event": "ping", "data": ""}
     
-    return EventSourceResponse(event_generator())
+    if SSE_AVAILABLE:
+        return EventSourceResponse(event_generator())
+    else:
+        # Fallback: return a simple streaming response
+        from fastapi.responses import StreamingResponse
+        async def generate():
+            async for event in event_generator():
+                yield f"event: {event['event']}\ndata: {event['data']}\n\n"
+        return StreamingResponse(generate(), media_type="text/event-stream")
 
 @app.get("/api/tokens")
 async def get_tokens(limit: int = 50):
