@@ -1,8 +1,7 @@
 import asyncio
-import json
-import websockets
+import aiohttp
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Optional, List
 from models.token import TokenData
 from utils.logger import logger
 
@@ -12,16 +11,8 @@ class PumpFunScanner:
         self._trade_cbs: list[Callable] = []
         self._running = False
         self.registry: dict[str, TokenData] = {}
-        self.reconnect_delay = 3
+        self.seen_tokens: set[str] = set()
         self.msg_count = 0
-        
-        # Multiple WebSocket URLs to try
-        self.ws_urls = [
-            "wss://pumpportal.fun/api/data",
-            "wss://frontend-dedicated-ws.pump.fun/ws",
-            "wss://pump.fun/ws",
-        ]
-        self.current_url_index = 0
 
     def on_new_token(self, fn: Callable):
         self._new_token_cbs.append(fn)
@@ -31,79 +22,117 @@ class PumpFunScanner:
         self._trade_cbs.append(fn)
         return fn
 
-    async def _subscribe(self, ws):
-        try:
-            await ws.send(json.dumps({"method": "subscribeNewToken"}))
-            await ws.send(json.dumps({"method": "subscribeTokenTrade"}))
-            logger.info("[scanner] Subscribed to newToken + tokenTrade")
-        except Exception as e:
-            logger.error(f"[scanner] Subscribe error: {e}")
-
-    async def _handle(self, raw: str):
-        self.msg_count += 1
-        if self.msg_count % 10 == 0:
-            logger.info(f"[scanner] {self.msg_count} msgs | {len(self.registry)} tokens")
+    async def fetch_new_tokens(self) -> List[TokenData]:
+        """Fetch new tokens from pump.fun API"""
+        tokens = []
         
         try:
-            msg = json.loads(raw)
+            # Try multiple API endpoints
+            apis = [
+                "https://frontend-api.pump.fun/tokens?limit=30&sort=createdAt&order=DESC",
+                "https://pump.fun/coins?offset=0&limit=30&sort=created&order=desc",
+                "https://api.pump.fun/tokens/recent?limit=30",
+            ]
+            
+            async with aiohttp.ClientSession() as session:
+                for api_url in apis:
+                    try:
+                        async with session.get(api_url, timeout=10, headers={
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "application/json"
+                        }) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                parsed = self._parse_api_response(data)
+                                if parsed:
+                                    tokens = parsed
+                                    logger.info(f"[scanner] Fetched {len(tokens)} tokens from {api_url.split('/')[2]}")
+                                    break
+                    except Exception as e:
+                        logger.debug(f"[scanner] API failed: {api_url} - {e}")
+                        continue
+                        
         except Exception as e:
-            return
-
-        # Debug: print first few messages
-        if self.msg_count <= 5:
-            logger.info(f"[scanner] Sample message: {list(msg.keys())}")
-
-        txtype = msg.get("txType") or msg.get("type") or msg.get("event") or ""
-
-        # Handle different message formats
-        if txtype == "create" or "initialBuy" in msg or msg.get("event") == "new_token":
-            token = self._parse_new(msg)
-            if token:
-                self.registry[token.mint] = token
-                logger.info(f"[scanner] 🆕 NEW TOKEN: {token.symbol} | ${token.price_sol:.8f}")
-                for cb in self._new_token_cbs:
-                    await self._call(cb, token)
-
-        elif txtype in ("buy", "sell") or msg.get("event") == "trade":
-            mint = msg.get("mint") or msg.get("tokenAddress")
-            if mint and mint in self.registry:
-                self._update(self.registry[mint], msg)
-                for cb in self._trade_cbs:
-                    await self._call(cb, self.registry[mint], msg)
-
-    def _parse_new(self, msg: dict) -> Optional[TokenData]:
-        mint = msg.get("mint") or msg.get("tokenAddress") or msg.get("address")
-        if not mint:
-            return None
+            logger.error(f"[scanner] Fetch error: {e}")
         
-        sol = float(msg.get("solAmount", msg.get("amount", 0)) or 0)
-        tkn = float(msg.get("tokenAmount", msg.get("tokenCount", 1)) or 1)
-        price = sol / max(tkn, 1)
-        
-        return TokenData(
-            mint=mint,
-            name=msg.get("name", msg.get("tokenName", "Unknown")),
-            symbol=msg.get("symbol", msg.get("tokenSymbol", "???")),
-            uri=msg.get("uri", msg.get("metadata", "")),
-            price_sol=price if price > 0 else 0.000001,
-            price_at_open=price,
-            price_peak=price,
-            dev_wallet=msg.get("traderPublicKey", msg.get("creator", "")),
-            first_seen=datetime.utcnow(),
-            last_updated=datetime.utcnow(),
-        )
+        return tokens
 
-    def _update(self, token: TokenData, msg: dict):
-        sol = float(msg.get("solAmount", msg.get("amount", 0)) or 0)
-        tkn = float(msg.get("tokenAmount", msg.get("tokenCount", 1)) or 1)
-        if tkn > 0 and sol > 0:
-            price = sol / tkn
-            token.price_sol = price
-            if token.price_at_open > 0:
-                token.spike_pct = ((price - token.price_at_open) / token.price_at_open) * 100
-            if price > token.price_peak:
-                token.price_peak = price
-        token.last_updated = datetime.utcnow()
+    def _parse_api_response(self, data) -> List[TokenData]:
+        """Parse different API response formats"""
+        tokens = []
+        
+        try:
+            # Extract token list from response
+            if isinstance(data, list):
+                items = data
+            elif isinstance(data, dict):
+                items = data.get("tokens", data.get("results", data.get("data", [])))
+            else:
+                return []
+            
+            for item in items[:30]:
+                mint = item.get("mint", item.get("address", item.get("id")))
+                if not mint or mint in self.seen_tokens:
+                    continue
+                
+                self.seen_tokens.add(mint)
+                
+                # Calculate price
+                price = float(item.get("price", item.get("priceSol", 0.000001)))
+                liquidity = float(item.get("liquidity", item.get("liquiditySol", 0)))
+                volume = float(item.get("volume24h", item.get("volume", 0)))
+                holders = int(item.get("holderCount", item.get("holders", 0)))
+                
+                token = TokenData(
+                    mint=mint,
+                    name=item.get("name", "Unknown"),
+                    symbol=item.get("symbol", "???"),
+                    uri=item.get("uri", item.get("metadata", "")),
+                    price_sol=price,
+                    price_at_open=price,
+                    price_peak=price,
+                    dev_wallet=item.get("creator", item.get("dev", "")),
+                    liquidity_sol=liquidity,
+                    volume_24h_usd=volume,
+                    holder_count=holders,
+                    first_seen=datetime.utcnow(),
+                    last_updated=datetime.utcnow(),
+                )
+                
+                tokens.append(token)
+                
+        except Exception as e:
+            logger.error(f"[scanner] Parse error: {e}")
+        
+        return tokens
+
+    async def run(self):
+        """Main scanner loop - polls every 5 seconds"""
+        self._running = True
+        logger.info("[scanner] Starting HTTP poller - checking every 5 seconds")
+        
+        while self._running:
+            try:
+                # Fetch new tokens
+                new_tokens = await self.fetch_new_tokens()
+                
+                for token in new_tokens:
+                    self.msg_count += 1
+                    self.registry[token.mint] = token
+                    logger.info(f"[scanner] 🆕 NEW TOKEN: {token.symbol} (${token.price_sol:.8f}) | Holders: {token.holder_count}")
+                    
+                    # Notify callbacks
+                    for cb in self._new_token_cbs:
+                        await self._call(cb, token)
+                
+                if new_tokens:
+                    logger.info(f"[scanner] Total tracked: {len(self.registry)} tokens")
+                
+                await asyncio.sleep(5)  # Poll every 5 seconds
+                
+            except Exception as e:
+                logger.error(f"[scanner] Loop error: {e}")
+                await asyncio.sleep(10)
 
     async def _call(self, fn, *args):
         try:
@@ -112,50 +141,7 @@ class PumpFunScanner:
             else:
                 fn(*args)
         except Exception as e:
-            logger.error(f"[scanner] cb error: {e}")
-
-    async def run(self):
-        self._running = True
-        
-        while self._running:
-            ws_url = self.ws_urls[self.current_url_index]
-            logger.info(f"[scanner] Attempting connection to {ws_url}")
-            
-            try:
-                async with websockets.connect(
-                    ws_url,
-                    ping_interval=20,
-                    ping_timeout=30,
-                    open_timeout=30,
-                    close_timeout=10,
-                    max_size=10**7,
-                    extra_headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Origin": "https://pump.fun",
-                        "Referer": "https://pump.fun/"
-                    }
-                ) as ws:
-                    logger.info(f"[scanner] ✅ CONNECTED to {ws_url}")
-                    await self._subscribe(ws)
-                    self.reconnect_delay = 3
-                    self.current_url_index = 0  # Reset on success
-                    
-                    async for msg in ws:
-                        await self._handle(msg)
-                        
-            except websockets.ConnectionClosed as e:
-                logger.warning(f"[scanner] Connection closed: {e.code} - {e.reason}")
-            except asyncio.TimeoutError:
-                logger.warning(f"[scanner] Timeout connecting to {ws_url}")
-            except Exception as e:
-                logger.error(f"[scanner] Error: {type(e).__name__}: {e}")
-            
-            if self._running:
-                # Try next URL
-                self.current_url_index = (self.current_url_index + 1) % len(self.ws_urls)
-                logger.info(f"[scanner] Reconnecting in {self.reconnect_delay}s...")
-                await asyncio.sleep(self.reconnect_delay)
-                self.reconnect_delay = min(self.reconnect_delay * 2, 60)
+            logger.error(f"[scanner] Callback error: {e}")
 
     def stop(self):
         self._running = False
