@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import asyncio
 from datetime import datetime
@@ -10,8 +9,9 @@ import os
 
 app = FastAPI(title="No-Brain-Trade Pro")
 
-# Ensure templates directory exists
-TEMPLATES_DIR = "web/templates"
+# FIXED: Use absolute path for templates
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEMPLATES_DIR = os.path.join(BASE_DIR, "web", "templates")
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
@@ -44,15 +44,52 @@ async def root(request: Request):
     try:
         return templates.TemplateResponse("index.html", {"request": request})
     except Exception as e:
-        # Fallback HTML if template not found
-        return HTMLResponse(content="""
+        # Fallback HTML with API links
+        return HTMLResponse(content=f"""
         <!DOCTYPE html>
         <html>
-        <head><title>No-Brain-Trade Pro</title></head>
-        <body style="background:black;color:lime;font-family:monospace;padding:20px;">
-        <h1>⚡ No-Brain-Trade Pro</h1>
-        <p>Service is running. Template loading failed, but API is working.</p>
-        <p><a href="/api/tokens" style="color:lime;">View API</a></p>
+        <head>
+            <title>No-Brain-Trade Pro</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ background: #0a0a0a; color: #00ff00; font-family: monospace; padding: 20px; }}
+                h1 {{ color: #00ff00; }}
+                a {{ color: #00ff00; }}
+                .token {{ background: #111; padding: 10px; margin: 5px; border-left: 3px solid #00ff00; }}
+                .spike {{ border-left-color: #ff0000; background: #1a0000; }}
+            </style>
+        </head>
+        <body>
+            <h1>⚡ No-Brain-Trade Pro ⚡</h1>
+            <p>Real-time pump.fun spike detection | 150%+ alerts</p>
+            
+            <h2>Live Tokens:</h2>
+            <div id="tokens"></div>
+            
+            <p><a href="/api/tokens">View API</a> | <a href="/health">Health Check</a></p>
+            
+            <script>
+                const eventSource = new EventSource('/events');
+                const tokensDiv = document.getElementById('tokens');
+                
+                eventSource.addEventListener('spike', function(e) {{
+                    const token = JSON.parse(e.data);
+                    const div = document.createElement('div');
+                    div.className = 'token spike';
+                    div.innerHTML = `<strong>🚀 ${{token.symbol}}</strong> +${{token.spike_pct?.toFixed(0) || 0}}% - ${{token.price_sol?.toFixed(8) || 0}} SOL`;
+                    tokensDiv.prepend(div);
+                    while(tokensDiv.children.length > 50) tokensDiv.removeChild(tokensDiv.lastChild);
+                }});
+                
+                eventSource.addEventListener('token', function(e) {{
+                    const token = JSON.parse(e.data);
+                    const div = document.createElement('div');
+                    div.className = 'token';
+                    div.innerHTML = `<strong>${{token.symbol}}</strong> ${{token.price_sol?.toFixed(8) || 0}} SOL`;
+                    tokensDiv.prepend(div);
+                    while(tokensDiv.children.length > 50) tokensDiv.removeChild(tokensDiv.lastChild);
+                }});
+            </script>
         </body>
         </html>
         """)
@@ -91,7 +128,9 @@ async def health():
         "status": "alive", 
         "timestamp": datetime.utcnow().isoformat(),
         "queue_size": token_queue.qsize(),
-        "tokens_tracked": len(recent_tokens)
+        "tokens_tracked": len(recent_tokens),
+        "template_dir": TEMPLATES_DIR,
+        "template_exists": os.path.exists(os.path.join(TEMPLATES_DIR, "index.html"))
     }
 
 @app.get("/api/stats")
