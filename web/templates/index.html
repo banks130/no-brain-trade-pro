@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>NO-BRAIN-TRADE</title>
+<style>
+  :root {
+    --bg: #050508;
+    --bg2: #0a0a12;
+    --bg3: #0f0f1a;
+    --border: #1a1a2e;
+    --cyan: #00e5ff;
+    --green: #00ff88;
+    --yellow: #ffcc00;
+    --red: #ff3366;
+    --dim: #444466;
+    --text: #ccccdd;
+    --font: 'JetBrains Mono', 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .logo {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--cyan);
+    letter-spacing: 2px;
+  }
+  .logo span { color: var(--yellow); }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--dim);
+  }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--dim);
+    animation: none;
+  }
+  .dot.live {
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ── Stats bar ── */
+  .stats {
+    display: flex;
+    gap: 0;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .stats::-webkit-scrollbar { display: none; }
+  .stat {
+    padding: 8px 16px;
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .stat-label { font-size: 9px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+  .stat-value { font-size: 16px; font-weight: 700; color: var(--cyan); }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    padding: 10px 20px;
+    cursor: pointer;
+    color: var(--dim);
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    flex: 1;
+    text-align: center;
+  }
+  .tab.active {
+    color: var(--cyan);
+    border-bottom-color: var(--cyan);
+  }
+
+  /* ── Feed ── */
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .feed-list { padding: 0; }
+
+  .token-card {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px;
+    animation: slideIn 0.3s ease;
+    transition: background 0.2s;
+    cursor: pointer;
+  }
+  .token-card:active { background: var(--bg3); }
+  .token-card:hover { background: var(--bg3); }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .token-left { min-width: 0; }
+  .token-right { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+  .token-symbol {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--cyan);
+  }
+  .token-name {
+    font-size: 10px;
+    color: var(--dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 180px;
+  }
+  .token-meta {
+    font-size: 10px;
+    color: var(--dim);
+    margin-top: 2px;
+  }
+  .token-meta span { margin-right: 8px; }
+
+  .spike-pct {
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .spike-mega { color: var(--red); }
+  .spike-high { color: var(--yellow); }
+  .spike-low  { color: var(--green); }
+  .spike-neg  { color: var(--dim); }
+
+  .safety-badge {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .safe    { background: rgba(0,255,136,0.15); color: var(--green); }
+  .caution { background: rgba(255,204,0,0.15);  color: var(--yellow); }
+  .risky   { background: rgba(255,51,102,0.15); color: var(--red); }
+
+  .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+  .tag {
+    font-size: 8px;
+    padding: 1px 5px;
+    background: rgba(0,229,255,0.08);
+    color: var(--cyan);
+    border-radius: 2px;
+    letter-spacing: 0.5px;
+  }
+  .tag.rug { background: rgba(255,51,102,0.1); color: var(--red); }
+
+  .ts { font-size: 9px; color: var(--dim); }
+
+  /* ── Spikes panel ── */
+  .spike-card {
+    border-left: 3px solid var(--yellow);
+    background: rgba(255,204,0,0.03);
+  }
+  .spike-card.mega { border-left-color: var(--red); background: rgba(255,51,102,0.04); }
+
+  /* ── Empty state ── */
+  .empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--dim);
+  }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-text { font-size: 12px; }
+
+  /* ── Ticker at top ── */
+  .ticker {
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+    height: 28px;
+    display: flex;
+    align-items: center;
+  }
+  .ticker-inner {
+    display: flex;
+    gap: 32px;
+    white-space: nowrap;
+    animation: scroll 30s linear infinite;
+    padding-left: 100%;
+  }
+  .ticker-inner:hover { animation-play-state: paused; }
+  @keyframes scroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+  }
+  .ticker-item {
+    font-size: 10px;
+    color: var(--dim);
+  }
+  .ticker-item.up   { color: var(--green); }
+  .ticker-item.pump { color: var(--yellow); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="logo">NO<span>-</span>BRAIN<span>-</span>TRADE</div>
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <span id="status-text">connecting...</span>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Tokens</div>
+    <div class="stat-value" id="stat-tokens">0</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Spikes</div>
+    <div class="stat-value" id="stat-spikes">0</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Uptime</div>
+    <div class="stat-value" id="stat-uptime">0m</div>
+  </div>
+</div>
+
+<!-- Ticker -->
+<div class="ticker">
+  <div class="ticker-inner" id="ticker">
+    <span class="ticker-item">⚡ Waiting for data...</span>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" onclick="showTab('feed')">📡 Live Feed</div>
+  <div class="tab" onclick="showTab('spikes')">⚡ Spikes</div>
+</div>
+
+<!-- Feed Panel -->
+<div class="panel active" id="panel-feed">
+  <div class="feed-list" id="feed-list">
+    <div class="empty">
+      <div class="empty-icon">📡</div>
+      <div class="empty-text">Connecting to pump.fun...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Spikes Panel -->
+<div class="panel" id="panel-spikes">
+  <div class="feed-list" id="spikes-list">
+    <div class="empty">
+      <div class="empty-icon">⚡</div>
+      <div class="empty-text">Waiting for 150%+ spikes...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── State ─────────────────────────────────────────────────
+  let tokenCount = 0;
+  let spikeCount = 0;
+  let startTime = Date.now();
+  let connected = false;
+  const tickerItems = [];
+
+  // ── Tabs ──────────────────────────────────────────────────
+  function showTab(name) {
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      t.classList.toggle('active', ['feed', 'spikes'][i] === name);
+    });
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+  }
+
+  // ── SSE ───────────────────────────────────────────────────
+  function connect() {
+    const es = new EventSource('/stream');
+
+    es.onopen = () => {
+      connected = true;
+      document.getElementById('dot').classList.add('live');
+      document.getElementById('status-text').textContent = 'LIVE';
+    };
+
+    es.onmessage = (e) => {
+      if (e.data.trim() === '') return;
+      try {
+        const d = JSON.parse(e.data);
+        handleToken(d);
+      } catch (_) {}
+    };
+
+    es.onerror = () => {
+      connected = false;
+      document.getElementById('dot').classList.remove('live');
+      document.getElementById('status-text').textContent = 'reconnecting...';
+      es.close();
+      setTimeout(connect, 3000);
+    };
+  }
+
+  // ── Token handler ─────────────────────────────────────────
+  function handleToken(d) {
+    tokenCount++;
+    document.getElementById('stat-tokens').textContent = tokenCount;
+
+    if (d.type === 'spike') {
+      spikeCount++;
+      document.getElementById('stat-spikes').textContent = spikeCount;
+      addCard('spikes-list', d, true);
+      addTicker(d);
+    }
+    addCard('feed-list', d, false);
+  }
+
+  function addCard(listId, d, isSpike) {
+    const list = document.getElementById(listId);
+
+    // Remove empty state
+    const empty = list.querySelector('.empty');
+    if (empty) empty.remove();
+
+    // Spike class
+    let spikeClass = 'spike-neg';
+    if (d.spike_pct >= 500) spikeClass = 'spike-mega';
+    else if (d.spike_pct >= 150) spikeClass = 'spike-high';
+    else if (d.spike_pct > 0) spikeClass = 'spike-low';
+
+    // Safety
+    let safeClass = 'risky', safeLabel = 'RISKY';
+    if (d.safety_score >= 80) { safeClass = 'safe'; safeLabel = 'SAFE'; }
+    else if (d.safety_score >= 50) { safeClass = 'caution'; safeLabel = 'CAUTION'; }
+
+    // Tags
+    const tagsHtml = (d.tags || []).map(t => {
+      const cls = t.includes('RUG') ? 'tag rug' : 'tag';
+      return `<span class="${cls}">${t}</span>`;
+    }).join('');
+
+    const cardClass = isSpike
+      ? `token-card spike-card${d.spike_pct >= 500 ? ' mega' : ''}`
+      : 'token-card';
+
+    const card = document.createElement('div');
+    card.className = cardClass;
+    card.innerHTML = `
+      <div class="token-left">
+        <div class="token-symbol">${d.symbol}</div>
+        <div class="token-name">${d.name}</div>
+        <div class="token-meta">
+          <span>💧 ${d.liquidity_sol} SOL</span>
+          <span>👥 ${d.holder_count}</span>
+          ${d.volume_5m > 0 ? `<span>📦 $${fmtNum(d.volume_5m)}</span>` : ''}
+        </div>
+        ${tagsHtml ? `<div class="tags">${tagsHtml}</div>` : ''}
+      </div>
+      <div class="token-right">
+        <div class="spike-pct ${spikeClass}">${d.spike_pct > 0 ? '+' : ''}${d.spike_pct}%</div>
+        <span class="safety-badge ${safeClass}">${safeLabel} ${d.safety_score}</span>
+        <span class="ts">${d.ts}</span>
+      </div>
+    `;
+
+    card.addEventListener('click', () => {
+      window.open(`https://dexscreener.com/solana/${d.mint}`, '_blank');
+    });
+
+    list.prepend(card);
+
+    // Cap list at 100 cards
+    while (list.children.length > 100) {
+      list.removeChild(list.lastChild);
+    }
+  }
+
+  function addTicker(d) {
+    const ticker = document.getElementById('ticker');
+    const item = document.createElement('span');
+    item.className = d.spike_pct >= 300 ? 'ticker-item pump' : 'ticker-item up';
+    item.textContent = `${d.symbol} +${d.spike_pct}%`;
+    ticker.appendChild(item);
+    if (ticker.children.length > 30) {
+      ticker.removeChild(ticker.firstChild);
+    }
+  }
+
+  // ── Uptime ────────────────────────────────────────────────
+  function updateUptime() {
+    const mins = Math.floor((Date.now() - startTime) / 60000);
+    const hrs = Math.floor(mins / 60);
+    const m = mins % 60;
+    document.getElementById('stat-uptime').textContent = hrs > 0 ? `${hrs}h${m}m` : `${m}m`;
+  }
+
+  function fmtNum(n) {
+    if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+    return n.toFixed(0);
+  }
+
+  // ── Init ─────────────────────────────────────────────────
+  connect();
+  setInterval(updateUptime, 10000);
+
+  // Load initial feed
+  fetch('/api/feed').then(r => r.json()).then(items => {
+    items.forEach(d => handleToken(d));
+  }).catch(() => {});
+</script>
+</body>
+</html>
