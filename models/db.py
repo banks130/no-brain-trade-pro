@@ -1,145 +1,131 @@
 """
-models/db.py — No-Brain-Trade Pro
-SQLAlchemy async ORM models: users, subscriptions, wallets, trades.
+models/db.py — Database models for No-Brain-Trade Pro
 """
 
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import String, Integer, Boolean, DateTime, Float, Text, Index
 from datetime import datetime
-from sqlalchemy import (
-    Column, String, Boolean, Float, Integer,
-    DateTime, Text, BigInteger, ForeignKey, Index
+from typing import Optional
+import os
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./nobraintrade.db")
+
+# Convert postgresql:// to postgresql+asyncpg:// for async support
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True
 )
-from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from config import DATABASE_URL
-
-Base = declarative_base()
-
-engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
-SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def get_db():
-    async with SessionLocal() as session:
-        yield session
+class Base(DeclarativeBase):
+    pass
 
-
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-
-# ── Users ─────────────────────────────────────────────────────
 
 class User(Base):
     __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(unique=True, index=True)
+    username: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    tier: Mapped[str] = mapped_column(default="free")  # free/pro
+    is_active: Mapped[bool] = mapped_column(default=True)
+    is_banned: Mapped[bool] = mapped_column(default=False)
+    alerts_enabled: Mapped[bool] = mapped_column(default=True)
+    subscribed_until: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    
+    # Relationships
+    wallet: Mapped[Optional["UserWallet"]] = relationship(back_populates="user", uselist=False)
+    auto_config: Mapped[Optional["AutoTradeConfig"]] = relationship(back_populates="user", uselist=False)
+    trades: Mapped[list["Trade"]] = relationship(back_populates="user")
 
-    telegram_id     = Column(BigInteger, primary_key=True)
-    username        = Column(String(64), nullable=True)
-    first_name      = Column(String(128), nullable=True)
-    tier            = Column(String(16), default="free")      # free | pro
-    is_active       = Column(Boolean, default=True)
-    is_banned       = Column(Boolean, default=False)
-    joined_at       = Column(DateTime, default=datetime.utcnow)
-    last_seen       = Column(DateTime, default=datetime.utcnow)
-
-    # Alert preferences
-    alerts_enabled  = Column(Boolean, default=True)
-    min_spike_pct   = Column(Float, default=150.0)
-    min_safety_score = Column(Integer, default=0)
-
-    subscriptions   = relationship("Subscription", back_populates="user")
-    wallet          = relationship("UserWallet", back_populates="user", uselist=False)
-    trades          = relationship("Trade", back_populates="user")
-    autotrade_config = relationship("AutoTradeConfig", back_populates="user", uselist=False)
-
-
-# ── Subscriptions ─────────────────────────────────────────────
-
-class Subscription(Base):
-    __tablename__ = "subscriptions"
-
-    id              = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id     = Column(BigInteger, ForeignKey("users.telegram_id"))
-    tier            = Column(String(16), default="pro")
-    starts_at       = Column(DateTime, default=datetime.utcnow)
-    expires_at      = Column(DateTime, nullable=False)
-    payment_tx      = Column(String(128), nullable=True)   # Solana tx signature
-    payment_sol     = Column(Float, default=0.5)
-    is_active       = Column(Boolean, default=True)
-
-    user            = relationship("User", back_populates="subscriptions")
-
-    __table_args__ = (Index("ix_sub_telegram_active", "telegram_id", "is_active"),)
-
-
-# ── User Wallets (non-custodial managed keypairs) ─────────────
 
 class UserWallet(Base):
     __tablename__ = "user_wallets"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(unique=True, index=True)
+    public_key: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    encrypted_private_key: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    last_used: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="wallet", foreign_keys=[telegram_id])
 
-    id                  = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id         = Column(BigInteger, ForeignKey("users.telegram_id"), unique=True)
-    public_key          = Column(String(64), nullable=False)
-    encrypted_secret    = Column(Text, nullable=False)   # AES-256 encrypted
-    created_at          = Column(DateTime, default=datetime.utcnow)
-
-    user                = relationship("User", back_populates="wallet")
-
-
-# ── Auto-Trade Config ─────────────────────────────────────────
 
 class AutoTradeConfig(Base):
-    __tablename__ = "autotrade_configs"
+    __tablename__ = "auto_trade_config"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(default=False)
+    trade_sol: Mapped[float] = mapped_column(default=0.1)
+    slippage_bps: Mapped[int] = mapped_column(default=300)
+    take_profit_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+    stop_loss_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+    max_trades_per_day: Mapped[int] = mapped_column(default=5)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="auto_config", foreign_keys=[telegram_id])
 
-    id              = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id     = Column(BigInteger, ForeignKey("users.telegram_id"), unique=True)
-    enabled         = Column(Boolean, default=False)
-    trade_sol       = Column(Float, default=0.1)         # SOL per trade
-    slippage_bps    = Column(Integer, default=300)       # 3%
-    max_trades_day  = Column(Integer, default=10)
-    min_spike_pct   = Column(Float, default=150.0)
-    min_safety_score = Column(Integer, default=50)
-    take_profit_pct = Column(Float, default=200.0)       # auto sell at +200%
-    stop_loss_pct   = Column(Float, default=-30.0)       # auto sell at -30%
-
-    user            = relationship("User", back_populates="autotrade_config")
-
-
-# ── Trades ────────────────────────────────────────────────────
 
 class Trade(Base):
     __tablename__ = "trades"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(index=True)
+    token_mint: Mapped[str] = mapped_column(String(100), index=True)
+    token_symbol: Mapped[str] = mapped_column(String(20))
+    trade_type: Mapped[str] = mapped_column(String(10))  # buy/sell
+    amount_sol: Mapped[float]
+    token_amount: Mapped[float]
+    price_sol: Mapped[float]
+    tx_signature: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    status: Mapped[str] = mapped_column(default="pending")  # pending/success/failed
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    
+    # Relationships
+    user: Mapped["User"] = relationship(foreign_keys=[telegram_id])
+    
+    __table_args__ = (
+        Index('idx_user_token', 'telegram_id', 'token_mint'),
+        Index('idx_created', 'created_at'),
+    )
 
-    id              = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id     = Column(BigInteger, ForeignKey("users.telegram_id"))
-    mint            = Column(String(64), nullable=False)
-    symbol          = Column(String(32), default="???")
-    action          = Column(String(8), nullable=False)   # buy | sell
-    sol_amount      = Column(Float, nullable=False)
-    token_amount    = Column(Float, default=0.0)
-    price_sol       = Column(Float, default=0.0)
-    tx_signature    = Column(String(128), nullable=True)
-    status          = Column(String(16), default="pending")  # pending|confirmed|failed
-    created_at      = Column(DateTime, default=datetime.utcnow)
-    confirmed_at    = Column(DateTime, nullable=True)
-    pnl_pct         = Column(Float, nullable=True)
 
-    user            = relationship("User", back_populates="trades")
-
-    __table_args__ = (Index("ix_trades_telegram_mint", "telegram_id", "mint"),)
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(index=True)
+    tx_signature: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    amount_sol: Mapped[float]
+    months: Mapped[int]
+    status: Mapped[str] = mapped_column(default="pending")  # pending/verified/expired
+    verified_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
 
-# ── Token Cache ───────────────────────────────────────────────
+async def init_db():
+    """Initialize database tables"""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    print("[db] Database initialized")
 
-class TokenCache(Base):
-    __tablename__ = "token_cache"
 
-    mint            = Column(String(64), primary_key=True)
-    symbol          = Column(String(32), default="???")
-    name            = Column(String(128), default="Unknown")
-    spike_pct       = Column(Float, default=0.0)
-    safety_score    = Column(Integer, default=100)
-    liquidity_sol   = Column(Float, default=0.0)
-    holder_count    = Column(Integer, default=0)
-    tags            = Column(Text, default="")          # JSON array as text
-    last_updated    = Column(DateTime, default=datetime.utcnow)
+async def close_db():
+    """Close database connections"""
+    await engine.dispose()
