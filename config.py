@@ -22,7 +22,12 @@ ADMIN_CHAT_ID      = os.getenv("ADMIN_CHAT_ID", "")
 TREASURY_WALLET    = os.getenv("TREASURY_WALLET", "")
 
 # ── Database ──────────────────────────────────────────────────
-DATABASE_URL       = os.getenv("DATABASE_URL", "postgresql+asyncpg://localhost/nbt")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://localhost/nbt")
+
+# Force async driver (fixes Railway's sync URL)
+if DATABASE_URL and "postgresql://" in DATABASE_URL and "+asyncpg" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+    print("✅ Converted DATABASE_URL to asyncpg format")
 
 # ── Security ──────────────────────────────────────────────────
 ENCRYPTION_KEY     = os.getenv("ENCRYPTION_KEY", "")
