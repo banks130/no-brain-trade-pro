@@ -29,9 +29,8 @@ class PumpFunScanner:
         try:
             # Try multiple API endpoints
             apis = [
-                "https://frontend-api.pump.fun/tokens?limit=30&sort=createdAt&order=DESC",
-                "https://pump.fun/coins?offset=0&limit=30&sort=created&order=desc",
-                "https://api.pump.fun/tokens/recent?limit=30",
+                "https://frontend-api.pump.fun/tokens?limit=20&sort=createdAt&order=DESC",
+                "https://pump.fun/coins?offset=0&limit=20&sort=created&order=desc",
             ]
             
             async with aiohttp.ClientSession() as session:
@@ -46,10 +45,10 @@ class PumpFunScanner:
                                 parsed = self._parse_api_response(data)
                                 if parsed:
                                     tokens = parsed
-                                    logger.info(f"[scanner] Fetched {len(tokens)} tokens from {api_url.split('/')[2]}")
+                                    logger.info(f"[scanner] Fetched {len(tokens)} tokens")
                                     break
                     except Exception as e:
-                        logger.debug(f"[scanner] API failed: {api_url} - {e}")
+                        logger.debug(f"[scanner] API failed: {api_url}")
                         continue
                         
         except Exception as e:
@@ -62,7 +61,6 @@ class PumpFunScanner:
         tokens = []
         
         try:
-            # Extract token list from response
             if isinstance(data, list):
                 items = data
             elif isinstance(data, dict):
@@ -70,14 +68,13 @@ class PumpFunScanner:
             else:
                 return []
             
-            for item in items[:30]:
+            for item in items[:20]:
                 mint = item.get("mint", item.get("address", item.get("id")))
                 if not mint or mint in self.seen_tokens:
                     continue
                 
                 self.seen_tokens.add(mint)
                 
-                # Calculate price
                 price = float(item.get("price", item.get("priceSol", 0.000001)))
                 liquidity = float(item.get("liquidity", item.get("liquiditySol", 0)))
                 volume = float(item.get("volume24h", item.get("volume", 0)))
@@ -98,7 +95,6 @@ class PumpFunScanner:
                     first_seen=datetime.utcnow(),
                     last_updated=datetime.utcnow(),
                 )
-                
                 tokens.append(token)
                 
         except Exception as e:
@@ -113,22 +109,17 @@ class PumpFunScanner:
         
         while self._running:
             try:
-                # Fetch new tokens
                 new_tokens = await self.fetch_new_tokens()
                 
                 for token in new_tokens:
                     self.msg_count += 1
                     self.registry[token.mint] = token
-                    logger.info(f"[scanner] 🆕 NEW TOKEN: {token.symbol} (${token.price_sol:.8f}) | Holders: {token.holder_count}")
+                    logger.info(f"[scanner] 🆕 NEW: {token.symbol} | ${token.price_sol:.8f}")
                     
-                    # Notify callbacks
                     for cb in self._new_token_cbs:
                         await self._call(cb, token)
                 
-                if new_tokens:
-                    logger.info(f"[scanner] Total tracked: {len(self.registry)} tokens")
-                
-                await asyncio.sleep(5)  # Poll every 5 seconds
+                await asyncio.sleep(5)
                 
             except Exception as e:
                 logger.error(f"[scanner] Loop error: {e}")
