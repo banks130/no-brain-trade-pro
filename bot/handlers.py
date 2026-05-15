@@ -1,0 +1,507 @@
+"""
+bot/handlers.py — No-Brain-Trade Pro
+All Telegram bot handlers: /start, /subscribe, /wallet, /autotrade, alerts.
+"""
+
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler,
+    MessageHandler, filters, ContextTypes
+)
+from telegram.constants import ParseMode
+from models.db import SessionLocal, AutoTradeConfig
+from models.token import TokenData
+from utils.subscription import (
+    get_or_create_user, get_or_create_wallet, is_pro,
+    activate_pro, verify_payment, get_subscription_info
+)
+from utils.helpers import shorten_address, format_number
+from utils.rpc import rpc
+from config import (
+    TELEGRAM_BOT_TOKEN, TREASURY_WALLET, PRO_PRICE_SOL,
+    PRO_DURATION_DAYS, DEFAULT_TRADE_SOL, DEFAULT_SLIPPAGE_BPS,
+    MAX_TRADE_SOL, ADMIN_CHAT_ID
+)
+from sqlalchemy import select, update
+from utils.logger import logger
+
+
+# ── /start ────────────────────────────────────────────────────
+
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    async with SessionLocal() as db:
+        await get_or_create_user(db, user.id, user.username, user.first_name)
+
+    text = (
+        "⚡ *NO-BRAIN-TRADE*\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Real-time pump\\.fun intelligence\\.\n\n"
+        "🆓 *Free* — Spike alerts \\(150%\\+\\)\n"
+        "💎 *Pro* — Full AI analysis \\+ Auto\\-trade\n\n"
+        "Use /menu to get started\\."
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+
+
+# ── /menu ─────────────────────────────────────────────────────
+
+async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    async with SessionLocal() as db:
+        pro = await is_pro(db, user.id)
+
+    tier_badge = "💎 PRO" if pro else "🆓 FREE"
+    kb = [
+        [
+            InlineKeyboardButton("💎 Subscribe Pro", callback_data="sub_info"),
+            InlineKeyboardButton("👜 My Wallet", callback_data="wallet_info"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Auto-Trade", callback_data="at_menu"),
+            InlineKeyboardButton("📊 My Trades", callback_data="my_trades"),
+        ],
+        [
+            InlineKeyboardButton("🔔 Alert Settings", callback_data="alert_settings"),
+            InlineKeyboardButton("ℹ️ Help", callback_data="help"),
+        ],
+    ]
+    await update.message.reply_text(
+        f"*NO-BRAIN-TRADE* | {tier_badge}",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
+
+
+# ── Subscription flow ─────────────────────────────────────────
+
+async def cb_sub_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+
+    async with SessionLocal() as db:
+        pro = await is_pro(db, user.id)
+        sub = await get_subscription_info(db, user.id)
+
+    if pro and sub:
+        days_left = (sub.expires_at - datetime.utcnow()).days
+        text = (
+            f"💎 *PRO ACTIVE*\n\n"
+            f"Expires: `{sub.expires_at.strftime('%Y-%m-%d')}`\n"
+            f"Days left: `{days_left}`\n\n"
+            f"Auto-trade + full AI analysis enabled."
+        )
+        kb = [[InlineKeyboardButton("🔄 Renew", callback_data="sub_pay")]]
+    else:
+        text = (
+            f"💎 *GO PRO*\n\n"
+            f"Price: `{PRO_PRICE_SOL} SOL / month`\n\n"
+            f"✅ Full DeepNet AI analysis\n"
+            f"✅ Auto-trade on every spike\n"
+            f"✅ Bundle + whale detection\n"
+            f"✅ Dev safety scoring\n\n"
+            f"Tap *Subscribe* to get your payment address."
+        )
+        kb = [[InlineKeyboardButton("💳 Subscribe Now", callback_data="sub_pay")]]
+
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+                                   reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cb_sub_pay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        f"💳 *PAYMENT INSTRUCTIONS*\n\n"
+        f"Send exactly `{PRO_PRICE_SOL} SOL` to:\n\n"
+        f"`{TREASURY_WALLET}`\n\n"
+        f"Then send your transaction signature here with:\n"
+        f"`/verify <TX_SIGNATURE>`\n\n"
+        f"⏳ Subscription activates within 1 minute of confirmation."
+    )
+    kb = [[InlineKeyboardButton("◀️ Back", callback_data="sub_info")]]
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+                                   reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cmd_verify(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """User submits: /verify <TX_SIGNATURE>"""
+    user = update.effective_user
+    args = ctx.args
+    if not args:
+        await update.message.reply_text("Usage: `/verify <TX_SIGNATURE>`", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    tx_sig = args[0].strip()
+    msg = await update.message.reply_text("🔍 Verifying payment...")
+
+    valid = await verify_payment(tx_sig)
+    if valid:
+        async with SessionLocal() as db:
+            await activate_pro(db, user.id, tx_sig)
+        await msg.edit_text(
+            f"✅ *PRO ACTIVATED!*\n\n"
+            f"Welcome to No-Brain-Trade Pro.\n"
+            f"Valid for {PRO_DURATION_DAYS} days.\n\n"
+            f"Use /menu → Auto-Trade to configure your bot.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        # Notify admin
+        if ADMIN_CHAT_ID:
+            await ctx.bot.send_message(
+                ADMIN_CHAT_ID,
+                f"💰 New Pro sub: @{user.username or user.id} | tx: {tx_sig[:20]}..."
+            )
+    else:
+        await msg.edit_text(
+            "❌ Payment not found or insufficient.\n\n"
+            "Make sure you sent the correct amount to the correct address.\n"
+            "Try again in a minute if the transaction is still confirming."
+        )
+
+
+# ── Wallet ────────────────────────────────────────────────────
+
+async def cb_wallet_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+
+    async with SessionLocal() as db:
+        wallet = await get_or_create_wallet(db, user.id)
+
+    balance = await rpc.get_balance(wallet.public_key)
+    kb = [
+        [InlineKeyboardButton("🔑 Export Private Key", callback_data="wallet_export")],
+        [InlineKeyboardButton("◀️ Back", callback_data="menu")],
+    ]
+    await query.edit_message_text(
+        f"👜 *YOUR WALLET*\n\n"
+        f"Address:\n`{wallet.public_key}`\n\n"
+        f"Balance: `{balance:.4f} SOL`\n\n"
+        f"ℹ️ Fund this wallet with SOL to enable auto-trading.\n"
+        f"You own the private key — funds are always yours.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
+
+
+async def cb_wallet_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+
+    async with SessionLocal() as db:
+        from utils.wallet import load_keypair
+        import base58
+        wallet = await get_or_create_wallet(db, user.id)
+        kp = load_keypair(wallet.encrypted_secret)
+        private_b58 = base58.b58encode(bytes(kp)).decode()
+
+    kb = [[InlineKeyboardButton("◀️ Back", callback_data="wallet_info")]]
+    await query.edit_message_text(
+        f"🔑 *PRIVATE KEY*\n\n"
+        f"`{private_b58}`\n\n"
+        f"⚠️ NEVER share this. Import into Phantom or Solflare.\n"
+        f"Delete this message after saving.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
+
+
+# ── Auto-Trade ────────────────────────────────────────────────
+
+async def cb_at_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+
+    async with SessionLocal() as db:
+        pro = await is_pro(db, user.id)
+        if not pro:
+            await query.edit_message_text(
+                "💎 *Pro required*\n\nAuto-trade is a Pro feature.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("Subscribe", callback_data="sub_info")
+                ]])
+            )
+            return
+
+        result = await db.execute(
+            select(AutoTradeConfig).where(AutoTradeConfig.telegram_id == user.id)
+        )
+        cfg = result.scalar_one_or_none()
+        if not cfg:
+            cfg = AutoTradeConfig(
+                telegram_id=user.id,
+                enabled=False,
+                trade_sol=DEFAULT_TRADE_SOL,
+                slippage_bps=DEFAULT_SLIPPAGE_BPS,
+            )
+            db.add(cfg)
+            await db.commit()
+            await db.refresh(cfg)
+
+    status = "✅ ON" if cfg.enabled else "❌ OFF"
+    toggle_label = "Turn OFF" if cfg.enabled else "Turn ON"
+    kb = [
+        [InlineKeyboardButton(f"🔄 {toggle_label}", callback_data="at_toggle")],
+        [
+            InlineKeyboardButton(f"💰 Trade size: {cfg.trade_sol} SOL", callback_data="at_size"),
+            InlineKeyboardButton(f"📉 Slippage: {cfg.slippage_bps/100:.1f}%", callback_data="at_slip"),
+        ],
+        [
+            InlineKeyboardButton(f"🎯 Min spike: {cfg.min_spike_pct:.0f}%", callback_data="at_spike"),
+            InlineKeyboardButton(f"🛡 Min safety: {cfg.min_safety_score}", callback_data="at_safe"),
+        ],
+        [
+            InlineKeyboardButton(f"🚀 TP: +{cfg.take_profit_pct:.0f}%", callback_data="at_tp"),
+            InlineKeyboardButton(f"🛑 SL: {cfg.stop_loss_pct:.0f}%", callback_data="at_sl"),
+        ],
+        [InlineKeyboardButton("◀️ Back", callback_data="menu")],
+    ]
+    await query.edit_message_text(
+        f"⚙️ *AUTO-TRADE* | {status}\n\n"
+        f"Trade size: `{cfg.trade_sol} SOL`\n"
+        f"Slippage: `{cfg.slippage_bps/100:.1f}%`\n"
+        f"Min spike: `{cfg.min_spike_pct:.0f}%`\n"
+        f"Min safety score: `{cfg.min_safety_score}`\n"
+        f"Take profit: `+{cfg.take_profit_pct:.0f}%`\n"
+        f"Stop loss: `{cfg.stop_loss_pct:.0f}%`\n"
+        f"Daily limit: `{cfg.max_trades_day} trades`",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
+
+
+async def cb_at_toggle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+    async with SessionLocal() as db:
+        result = await db.execute(select(AutoTradeConfig).where(AutoTradeConfig.telegram_id == user.id))
+        cfg = result.scalar_one_or_none()
+        if cfg:
+            cfg.enabled = not cfg.enabled
+            await db.commit()
+    await cb_at_menu(update, ctx)
+
+
+async def cb_my_trades(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+
+    async with SessionLocal() as db:
+        from models.db import Trade
+        result = await db.execute(
+            select(Trade)
+            .where(Trade.telegram_id == user.id)
+            .order_by(Trade.created_at.desc())
+            .limit(10)
+        )
+        trades = result.scalars().all()
+
+    if not trades:
+        text = "📊 *MY TRADES*\n\nNo trades yet."
+    else:
+        lines = ["📊 *MY TRADES* (last 10)\n"]
+        for t in trades:
+            icon = "🟢" if t.action == "buy" else "🔴"
+            pnl = f" | PnL: {t.pnl_pct:+.0f}%" if t.pnl_pct else ""
+            lines.append(
+                f"{icon} `{t.symbol}` {t.action.upper()} {t.sol_amount:.3f}SOL"
+                f"{pnl}\n`{t.created_at.strftime('%m/%d %H:%M')}`"
+            )
+        text = "\n".join(lines)
+
+    kb = [[InlineKeyboardButton("◀️ Back", callback_data="menu")]]
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+                                   reply_markup=InlineKeyboardMarkup(kb))
+
+
+# ── Alert settings ────────────────────────────────────────────
+
+async def cb_alert_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+
+    async with SessionLocal() as db:
+        from models.db import User as DBUser
+        result = await db.execute(select(DBUser).where(DBUser.telegram_id == user.id))
+        u = result.scalar_one_or_none()
+
+    if not u:
+        return
+
+    status = "✅ ON" if u.alerts_enabled else "❌ OFF"
+    kb = [
+        [InlineKeyboardButton(f"🔔 Alerts: {status}", callback_data="alert_toggle")],
+        [InlineKeyboardButton("◀️ Back", callback_data="menu")],
+    ]
+    await query.edit_message_text(
+        f"🔔 *ALERT SETTINGS*\n\n"
+        f"Alerts: {status}\n"
+        f"Min spike: `{u.min_spike_pct:.0f}%`\n"
+        f"Min safety: `{u.min_safety_score}`",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
+
+
+async def cb_alert_toggle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+    async with SessionLocal() as db:
+        from models.db import User as DBUser
+        result = await db.execute(select(DBUser).where(DBUser.telegram_id == user.id))
+        u = result.scalar_one_or_none()
+        if u:
+            u.alerts_enabled = not u.alerts_enabled
+            await db.commit()
+    await cb_alert_settings(update, ctx)
+
+
+# ── Help ──────────────────────────────────────────────────────
+
+async def cb_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    text = (
+        "ℹ️ *HELP*\n\n"
+        "`/start` — Start the bot\n"
+        "`/menu` — Main menu\n"
+        "`/verify <TX>` — Verify Pro payment\n\n"
+        "*Free:* Spike alerts when tokens pump 150%+\n\n"
+        "*Pro:* Full AI analysis with each alert + "
+        "auto-trade using your own wallet.\n\n"
+        "Your wallet is non-custodial — only you hold the keys."
+    )
+    kb = [[InlineKeyboardButton("◀️ Back", callback_data="menu")]]
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+                                   reply_markup=InlineKeyboardMarkup(kb))
+
+
+# ── Menu router ───────────────────────────────────────────────
+
+async def cb_menu_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await cmd_menu.__wrapped__(update, ctx) if hasattr(cmd_menu, '__wrapped__') else await _menu_msg(update, ctx)
+
+
+async def _menu_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = update.effective_user
+    async with SessionLocal() as db:
+        pro = await is_pro(db, user.id)
+    tier_badge = "💎 PRO" if pro else "🆓 FREE"
+    kb = [
+        [
+            InlineKeyboardButton("💎 Subscribe Pro", callback_data="sub_info"),
+            InlineKeyboardButton("👜 My Wallet", callback_data="wallet_info"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Auto-Trade", callback_data="at_menu"),
+            InlineKeyboardButton("📊 My Trades", callback_data="my_trades"),
+        ],
+        [
+            InlineKeyboardButton("🔔 Alert Settings", callback_data="alert_settings"),
+            InlineKeyboardButton("ℹ️ Help", callback_data="help"),
+        ],
+    ]
+    await query.edit_message_text(
+        f"*NO-BRAIN-TRADE* | {tier_badge}",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
+
+
+# ── Alert broadcaster (called by main pipeline) ───────────────
+
+async def broadcast_spike_alert(
+    app: Application,
+    token: TokenData,
+    spike_pct: float,
+    pro_users: list[int],
+    free_users: list[int],
+):
+    """
+    Send free alert to all free users.
+    Send full AI alert to all pro users.
+    """
+    # Free alert
+    free_text = (
+        f"⚡ *SPIKE ALERT*\n\n"
+        f"*{token.name}* (`{token.symbol}`)\n"
+        f"`{token.mint}`\n\n"
+        f"📊 Spike: *+{spike_pct:.0f}%*\n"
+        f"💧 Liq: {token.liquidity_sol:.1f} SOL\n\n"
+        f"[DexScreener](https://dexscreener.com/solana/{token.mint}) | "
+        f"[Pump.fun](https://pump.fun/{token.mint})\n\n"
+        f"_💎 Upgrade to Pro for full AI analysis_"
+    )
+
+    # Pro alert (full DeepNet data)
+    risk_emoji = "✅" if token.safety_score >= 70 else "⚠️" if token.safety_score >= 40 else "🚩"
+    tags_str = " ".join(f"`{t}`" for t in token.tags[:4]) if token.tags else "—"
+    pro_text = (
+        f"⚡ *SPIKE ALERT* | 🧠 DeepNet\n\n"
+        f"*{token.name}* (`{token.symbol}`)\n"
+        f"`{token.mint}`\n\n"
+        f"📊 Spike: *+{spike_pct:.0f}%*\n"
+        f"💧 Liq: {token.liquidity_sol:.1f} SOL\n"
+        f"📦 Vol 5m: ${format_number(token.volume_5m_usd)}\n"
+        f"👥 Holders: {token.holder_count}\n"
+        f"{risk_emoji} Safety: {token.safety_score}/100\n"
+        f"🔍 Bundles: {token.bundle_count}\n"
+        f"🐋 Smart Money: {'Yes' if token.smart_money_flag else 'No'}\n"
+        f"🔑 Auth Revoked: {'Yes' if token.mint_authority_revoked else 'No'}\n"
+        f"🏷 Tags: {tags_str}\n\n"
+        f"[DexScreener](https://dexscreener.com/solana/{token.mint}) | "
+        f"[Pump.fun](https://pump.fun/{token.mint})"
+    )
+
+    # Send to free users
+    for uid in free_users:
+        try:
+            await app.bot.send_message(
+                uid, free_text, parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True
+            )
+        except Exception:
+            pass
+
+    # Send to pro users
+    for uid in pro_users:
+        try:
+            await app.bot.send_message(
+                uid, pro_text, parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True
+            )
+        except Exception:
+            pass
+
+
+# ── Register all handlers ─────────────────────────────────────
+
+def register(app: Application):
+    app.add_handler(CommandHandler("start",  cmd_start))
+    app.add_handler(CommandHandler("menu",   cmd_menu))
+    app.add_handler(CommandHandler("verify", cmd_verify))
+
+    app.add_handler(CallbackQueryHandler(cb_sub_info,       pattern="^sub_info$"))
+    app.add_handler(CallbackQueryHandler(cb_sub_pay,        pattern="^sub_pay$"))
+    app.add_handler(CallbackQueryHandler(cb_wallet_info,    pattern="^wallet_info$"))
+    app.add_handler(CallbackQueryHandler(cb_wallet_export,  pattern="^wallet_export$"))
+    app.add_handler(CallbackQueryHandler(cb_at_menu,        pattern="^at_menu$"))
+    app.add_handler(CallbackQueryHandler(cb_at_toggle,      pattern="^at_toggle$"))
+    app.add_handler(CallbackQueryHandler(cb_my_trades,      pattern="^my_trades$"))
+    app.add_handler(CallbackQueryHandler(cb_alert_settings, pattern="^alert_settings$"))
+    app.add_handler(CallbackQueryHandler(cb_alert_toggle,   pattern="^alert_toggle$"))
+    app.add_handler(CallbackQueryHandler(cb_help,           pattern="^help$"))
+    app.add_handler(CallbackQueryHandler(_menu_msg,         pattern="^menu$"))
