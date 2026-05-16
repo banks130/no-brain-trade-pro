@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from models.token import TokenData
@@ -12,17 +13,20 @@ class TrendingEngine:
 
     def ingest(self, token: TokenData):
         mint = token.mint
-        self._history[mint].append((datetime.utcnow(), token.price_sol, token.volume_24h_usd))
+        volume = getattr(token, 'volume_24h_usd', 0)
+        self._history[mint].append((datetime.utcnow(), token.price_sol, volume))
         self._update_score(token)
 
     def _update_score(self, token: TokenData):
         score = 0.0
         if token.spike_pct > 100:
             score += token.spike_pct / 100
-        if token.volume_24h_usd > 10000:
-            score += token.volume_24h_usd / 100000
-        if token.liquidity_sol > 50:
-            score += token.liquidity_sol / 100
+        volume = getattr(token, 'volume_24h_usd', 0)
+        if volume > 10000:
+            score += volume / 100000
+        liquidity = getattr(token, 'liquidity_sol', 0)
+        if liquidity > 50:
+            score += liquidity / 100
         self._scores[token.mint] = score
 
     def get_trending(self, top_n: int = TRENDING_TOP_N):
