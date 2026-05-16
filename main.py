@@ -6,7 +6,6 @@ import traceback
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 print("=== NO-BRAIN-TRADE PRO STARTING ===", flush=True)
-print(f"Python version: {sys.version}", flush=True)
 
 try:
     from datetime import datetime
@@ -21,9 +20,10 @@ try:
     print(f"[boot] Config OK | spike: +{SPIKE_THRESHOLD_PCT}%", flush=True)
 except Exception as e:
     print(f"[boot] Config error: {e}", flush=True)
-    TELEGRAM_BOT_TOKEN = None
+    TELEGRAM_BOT_TOKEN = "8487846380:AAH6rY0zH2vxFtJ2M3IuJMVTZ0Z9ghE2L-s"
     WEB_HOST = "0.0.0.0"
     WEB_PORT = 8080
+    SPIKE_THRESHOLD_PCT = 150
 
 try:
     from models.token import TokenData
@@ -52,6 +52,7 @@ except Exception as e:
 try:
     from bot.handlers import register, broadcast_spike_alert
     from telegram.ext import Application
+    from telegram.request import HTTPXRequest
     print("[boot] Bot handlers OK", flush=True)
 except Exception as e:
     print(f"[boot] Bot error: {e}", flush=True)
@@ -84,24 +85,35 @@ async def analysis_worker():
         job = await _queue.get()
         try:
             if job[0] == "fast":
-                if deepnet:
-                    token = await deepnet.analyze(job[1], fast=True)
-                else:
-                    token = job[1]
+                token = job[1]
                 trending_engine.ingest(token)
                 push_to_web(token, "token")
-                print(f"[worker] Processed token: {token.symbol}")
+                logger.info(f"[worker] Processed: {token.symbol}")
+                
             elif job[0] == "full":
                 token = job[1]
                 spike_pct = job[2]
-                if deepnet:
-                    token = await deepnet.analyze(token, fast=False)
                 trending_engine.ingest(token)
                 push_to_web(token, "spike")
-                print(f"[worker] 🚀 SPIKE: {token.symbol} +{spike_pct:.0f}%")
+                logger.info(f"[worker] 🚀 SPIKE: {token.symbol} +{spike_pct:.0f}%")
+                
+                # Send Telegram alerts
                 if tg_app and broadcast_spike_alert:
-                    free_users, pro_users = [], []
+                    # Get users
+                    free_users = []
+                    pro_users = []
+                    async with SessionLocal() as db:
+                        result = await db.execute(
+                            select(User).where(User.alerts_enabled == True)
+                        )
+                        for user in result.scalars().all():
+                            if user.tier == "pro":
+                                pro_users.append(user.telegram_id)
+                            else:
+                                free_users.append(user.telegram_id)
+                    
                     await broadcast_spike_alert(tg_app, token, spike_pct, pro_users, free_users)
+                    
         except Exception as e:
             logger.error(f"[worker] {e}")
         finally:
@@ -120,49 +132,56 @@ async def main():
     
     @scanner.on_new_token
     async def on_new_token(token: TokenData):
-        print(f"[scanner] 🆕 NEW TOKEN: {token.symbol} (${token.price_sol:.8f} SOL)")
+        logger.info(f"[scanner] 🆕 NEW: {token.symbol} | ${token.price_sol:.8f}")
         trending_engine.ingest(token)
         push_to_web(token, "token")
-        try:
-            _queue.put_nowait(("fast", token))
-        except asyncio.QueueFull:
-            pass
+        await _queue.put(("fast", token))
+        
+        # Check for spike on new token
+        if token.spike_pct >= SPIKE_THRESHOLD_PCT:
+            await spike_detector.process(token)
 
     @scanner.on_trade
     async def on_trade(token: TokenData, msg: dict):
         await spike_detector.process(token)
-        trending_engine.ingest(token)
 
     @spike_detector.on_spike
     async def on_spike(token: TokenData, spike_pct: float):
-        print(f"[spike] ⚡⚡⚡ REAL SPIKE: {token.symbol} +{spike_pct:.0f}% ⚡⚡⚡")
+        logger.info(f"[spike] ⚡⚡⚡ {token.symbol} +{spike_pct:.0f}% ⚡⚡⚡")
         push_to_web(token, "spike")
-        try:
-            _queue.put_nowait(("full", token, spike_pct))
-        except asyncio.QueueFull:
-            pass
+        await _queue.put(("full", token, spike_pct))
 
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != "":
+    # Start Telegram Bot
+    if TELEGRAM_BOT_TOKEN:
         print("[main] Starting Telegram bot...", flush=True)
         try:
-            tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-            if register:
-                register(tg_app)
+            # Use HTTPXRequest for better connection
+            request = HTTPXRequest(connect_timeout=30, read_timeout=30)
+            tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).request(request).build()
+            register(tg_app)
             await tg_app.initialize()
             await tg_app.start()
-            await tg_app.updater.start_polling()
-            print("[main] Telegram bot running ✓", flush=True)
+            await tg_app.updater.start_polling(drop_pending_updates=True)
+            print("[main] ✅ Telegram bot running!", flush=True)
+            
+            # Send startup message to admin
+            try:
+                await tg_app.bot.send_message(123456789, "✅ No-Brain-Trade Pro Bot Started!")
+            except:
+                pass
+                
         except Exception as e:
             print(f"[main] Bot failed: {e}", flush=True)
+            tg_app = None
 
+    # Start web server
     tasks = [
         asyncio.create_task(scanner.run(), name="scanner"),
         asyncio.create_task(analysis_worker(), name="analysis"),
         asyncio.create_task(run_web(), name="web"),
     ]
     
-    print("[main] All systems go ✓", flush=True)
-    print("[main] Waiting for real pump.fun tokens...", flush=True)
+    print("[main] ✅ All systems go!", flush=True)
     
     try:
         await asyncio.gather(*tasks)
@@ -170,7 +189,7 @@ async def main():
         logger.error(f"[main] Fatal: {e}")
 
 async def run_web():
-    config = uvicorn.Config(fastapi_app, host=WEB_HOST, port=WEB_PORT, log_level="info")
+    config = uvicorn.Config(fastapi_app, host=WEB_HOST, port=WEB_PORT, log_level="warning")
     server = uvicorn.Server(config)
     await server.serve()
 
