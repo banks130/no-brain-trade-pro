@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NO-BRAIN TRADE PRO // WAR ROOM</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=VT323&display=swap');
+
+:root {
+  --green: #00ff41;
+  --green-dim: #00aa2a;
+  --green-dark: #003a0d;
+  --red: #ff2020;
+  --red-dim: #aa1010;
+  --yellow: #ffcc00;
+  --cyan: #00ffff;
+  --orange: #ff6600;
+  --bg: #020a04;
+  --panel-bg: rgba(0,20,5,0.85);
+  --border: rgba(0,255,65,0.25);
+  --glow: 0 0 10px rgba(0,255,65,0.4);
+  --glow-strong: 0 0 20px rgba(0,255,65,0.8);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--green);
+  font-family: 'Share Tech Mono', monospace;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0,10,2,0.9);
+}
+
+.logo {
+  font-family: 'Orbitron', monospace;
+  font-weight: 900;
+  font-size: 14px;
+  color: var(--green);
+  text-shadow: var(--glow-strong);
+}
+
+.header-center {
+  font-family: 'VT323', monospace;
+  font-size: 20px;
+  color: var(--green-dim);
+}
+
+.header-right {
+  display: flex;
+  gap: 20px;
+  font-size: 11px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--green);
+  border-radius: 50%;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+.main-grid {
+  display: grid;
+  height: calc(100vh - 48px);
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 180px;
+  gap: 1px;
+  background: var(--border);
+}
+
+.panel {
+  background: var(--panel-bg);
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  background: rgba(0,255,65,0.04);
+}
+
+.panel-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 9px;
+  letter-spacing: 3px;
+}
+
+#radar-panel { grid-column: 1; grid-row: 1; }
+#warroom-panel { grid-column: 2; grid-row: 1; }
+#killfeed-panel { grid-column: 3; grid-row: 1; }
+#heartbeat-panel { grid-column: 1 / 3; grid-row: 2; }
+#heatmap-panel { grid-column: 3; grid-row: 2; }
+
+#radar-canvas, #ekg-canvas, #city-canvas {
+  width: 100%;
+  height: calc(100% - 36px);
+}
+
+.warroom-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  height: calc(100% - 100px);
+  gap: 1px;
+  background: var(--border);
+}
+
+.warroom-col {
+  background: var(--panel-bg);
+  overflow-y: auto;
+}
+
+.wc-header {
+  padding: 6px 8px;
+  font-family: 'Orbitron', monospace;
+  font-size: 8px;
+  letter-spacing: 2px;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+
+.wc-header.incoming { color: var(--cyan); }
+.wc-header.active { color: var(--yellow); }
+.wc-header.killed { color: var(--red); }
+
+.wc-list {
+  padding: 4px;
+}
+
+.wc-token {
+  padding: 4px 6px;
+  border-left: 2px solid;
+  font-size: 10px;
+  margin-bottom: 3px;
+}
+
+.wc-token.incoming { border-color: var(--cyan); color: var(--cyan); }
+.wc-token.active { border-color: var(--yellow); color: var(--yellow); }
+.wc-token.killed { border-color: var(--red); color: var(--red); text-decoration: line-through; }
+
+.leaderboard {
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  height: 100px;
+  overflow-y: auto;
+}
+
+.lb-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 8px;
+  margin-bottom: 4px;
+}
+
+.lb-entry {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  padding: 2px 0;
+}
+
+.killfeed-list {
+  height: calc(100% - 36px);
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.kill-entry {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  border-right: 3px solid;
+  font-size: 10px;
+  margin-bottom: 4px;
+  background: rgba(0,0,0,0.3);
+}
+
+.kill-entry.pump { border-color: var(--green); }
+.kill-entry.rug { border-color: var(--red); }
+.kill-entry.whale { border-color: var(--cyan); }
+
+.ticker-tape {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  background: rgba(0,20,5,0.95);
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+}
+
+.ticker-inner {
+  white-space: nowrap;
+  animation: scroll-left 40s linear infinite;
+  font-size: 10px;
+}
+
+@keyframes scroll-left {
+  from { transform: translateX(100%); }
+  to { transform: translateX(-100%); }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">NO-BRAIN TRADE PRO</div>
+  <div class="header-center">// WAR ROOM //</div>
+  <div class="header-right">
+    <span><span class="status-dot"></span>LIVE</span>
+    <span id="clock">--:--:--</span>
+  </div>
+</header>
+
+<div class="main-grid">
+  <div class="panel" id="radar-panel">
+    <div class="panel-header"><span class="panel-title">THREAT RADAR</span></div>
+    <canvas id="radar-canvas"></canvas>
+  </div>
+  <div class="panel" id="warroom-panel">
+    <div class="panel-header"><span class="panel-title">OPS CENTER</span></div>
+    <div class="warroom-cols">
+      <div class="warroom-col"><div class="wc-header incoming">▶ INCOMING</div><div class="wc-list" id="incoming-list"></div></div>
+      <div class="warroom-col"><div class="wc-header active">⚡ ACTIVE</div><div class="wc-list" id="active-list"></div></div>
+      <div class="warroom-col"><div class="wc-header killed">☠ KILLED</div><div class="wc-list" id="killed-list"></div></div>
+    </div>
+    <div class="leaderboard"><div class="lb-title">TOP PUMPS</div><div id="leaderboard"></div></div>
+  </div>
+  <div class="panel" id="killfeed-panel">
+    <div class="panel-header"><span class="panel-title">KILL FEED</span></div>
+    <div class="killfeed-list" id="killfeed"></div>
+  </div>
+  <div class="panel" id="heartbeat-panel">
+    <div class="panel-header"><span class="panel-title">HEARTBEAT</span><span id="bpm">-- BPM</span></div>
+    <canvas id="ekg-canvas"></canvas>
+  </div>
+  <div class="panel" id="heatmap-panel">
+    <div class="panel-header"><span class="panel-title">HEATMAP CITY</span></div>
+    <canvas id="city-canvas"></canvas>
+  </div>
+</div>
+
+<div class="ticker-tape"><div class="ticker-inner" id="ticker">LOADING...</div></div>
+
+<script>
+// Clock
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// Mock data for War Room
+const tickers = ['BONK','WIF','POPCAT','PONKE','MYRO','SLERF','BRETT'];
+let activeTokens = [
+  { symbol: 'BONK', spike: 420, status: 'active' },
+  { symbol: 'WIF', spike: 380, status: 'active' },
+  { symbol: 'POPCAT', spike: 290, status: 'active' },
+];
+
+// Update UI
+function updateWarRoom() {
+  const incoming = document.getElementById('incoming-list');
+  const active = document.getElementById('active-list');
+  const killed = document.getElementById('killed-list');
+  
+  incoming.innerHTML = activeTokens.filter(t => t.status === 'incoming').slice(0,5).map(t => 
+    `<div class="wc-token incoming"><strong>${t.symbol}</strong> +${t.spike}%</div>`
+  ).join('');
+  
+  active.innerHTML = activeTokens.filter(t => t.status === 'active').slice(0,5).map(t => 
+    `<div class="wc-token active"><strong>${t.symbol}</strong> +${t.spike}%</div>`
+  ).join('');
+  
+  document.getElementById('leaderboard').innerHTML = 
+    activeTokens.slice(0,5).map((t,i) => `<div class="lb-entry"><span>#${i+1}</span><span>${t.symbol}</span><span>+${t.spike}%</span></div>`).join('');
+}
+
+// Radar
+const radarCanvas = document.getElementById('radar-canvas');
+const rctx = radarCanvas.getContext('2d');
+let radarAngle = 0;
+
+function resizeRadar() {
+  radarCanvas.width = document.getElementById('radar-panel').clientWidth;
+  radarCanvas.height = document.getElementById('radar-panel').clientHeight - 36;
+}
+
+function drawRadar() {
+  const w = radarCanvas.width, h = radarCanvas.height;
+  const cx = w/2, cy = h/2;
+  const R = Math.min(cx, cy) * 0.8;
+  
+  rctx.fillStyle = '#010a02';
+  rctx.fillRect(0,0,w,h);
+  
+  // Rings
+  for(let i=1;i<=3;i++) {
+    rctx.beginPath();
+    rctx.arc(cx,cy,R*i/3,0,Math.PI*2);
+    rctx.strokeStyle = `rgba(0,255,65,0.1)`;
+    rctx.stroke();
+  }
+  
+  // Sweep
+  for(let a=radarAngle-1; a<radarAngle; a+=0.05) {
+    rctx.beginPath();
+    rctx.moveTo(cx,cy);
+    rctx.arc(cx,cy,R,a,a+0.05);
+    rctx.fillStyle = `rgba(0,255,65,0.05)`;
+    rctx.fill();
+  }
+  
+  // Blips
+  activeTokens.forEach((t,i) => {
+    const angle = radarAngle + i * 1.2;
+    const dist = 0.3 + Math.sin(Date.now()/1000 + i) * 0.2;
+    const x = cx + Math.cos(angle) * R * dist;
+    const y = cy + Math.sin(angle) * R * dist;
+    rctx.beginPath();
+    rctx.arc(x,y,4,0,Math.PI*2);
+    rctx.fillStyle = t.spike > 300 ? '#ff0000' : '#00ff00';
+    rctx.fill();
+  });
+  
+  radarAngle += 0.03;
+  requestAnimationFrame(drawRadar);
+}
+
+// EKG
+const ekgCanvas = document.getElementById('ekg-canvas');
+const ectx = ekgCanvas.getContext('2d');
+let ekgTime = 0;
+
+function resizeEKG() {
+  ekgCanvas.width = document.getElementById('heartbeat-panel').clientWidth;
+  ekgCanvas.height = document.getElementById('heartbeat-panel').clientHeight - 36;
+}
+
+function drawEKG() {
+  const w = ekgCanvas.width, h = ekgCanvas.height;
+  const mid = h/2;
+  
+  ectx.fillStyle = '#010a02';
+  ectx.fillRect(0,0,w,h);
+  
+  ectx.beginPath();
+  for(let x=0; x<w; x++) {
+    const t = ekgTime + x/w * 4;
+    const val = Math.sin(t * 10) * 0.3 + Math.sin(t * 3) * 0.1;
+    const y = mid - val * 50;
+    if(x===0) ectx.moveTo(x,y);
+    else ectx.lineTo(x,y);
+  }
+  ectx.strokeStyle = '#00ff41';
+  ectx.stroke();
+  
+  ekgTime += 0.02;
+  requestAnimationFrame(drawEKG);
+}
+
+// City
+const cityCanvas = document.getElementById('city-canvas');
+const cctx = cityCanvas.getContext('2d');
+
+function resizeCity() {
+  cityCanvas.width = document.getElementById('heatmap-panel').clientWidth;
+  cityCanvas.height = document.getElementById('heatmap-panel').clientHeight - 36;
+}
+
+function drawCity() {
+  const w = cityCanvas.width, h = cityCanvas.height;
+  cctx.fillStyle = '#010a02';
+  cctx.fillRect(0,0,w,h);
+  
+  for(let i=0; i<20; i++) {
+    const height = 20 + Math.sin(Date.now()/1000 + i) * 30 + 40;
+    const x = i * 35;
+    const hue = 100 + Math.sin(Date.now()/500 + i) * 30;
+    cctx.fillStyle = `hsl(${hue},70%,40%)`;
+    cctx.fillRect(x, h-height, 25, height);
+  }
+  
+  requestAnimationFrame(drawCity);
+}
+
+// Kill feed
+function addKillEntry() {
+  const kills = ['🚀 BONK +420% PUMP', '💀 WIF RUGGED', '🐋 WHALE DUMPED POPCAT', '⚠️ DEV SOLD'];
+  const feed = document.getElementById('killfeed');
+  const div = document.createElement('div');
+  div.className = 'kill-entry pump';
+  div.innerHTML = `<span>${kills[Math.floor(Math.random()*kills.length)]}</span>`;
+  feed.insertBefore(div, feed.firstChild);
+  if(feed.children.length > 10) feed.removeChild(feed.lastChild);
+}
+setInterval(addKillEntry, 5000);
+
+// Ticker
+function updateTicker() {
+  document.getElementById('ticker').innerHTML = activeTokens.map(t => `${t.symbol} +${t.spike}%`).join(' ◈ ') + ' ◈ PUMP.FUN LIVE';
+}
+setInterval(updateTicker, 3000);
+
+// Resize handlers
+window.addEventListener('resize', () => {
+  resizeRadar();
+  resizeEKG();
+  resizeCity();
+});
+
+resizeRadar();
+resizeEKG();
+resizeCity();
+drawRadar();
+drawEKG();
+drawCity();
+updateWarRoom();
+updateTicker();
+
+// Simulate new tokens
+setInterval(() => {
+  const newToken = { symbol: tickers[Math.floor(Math.random()*tickers.length)], spike: Math.floor(Math.random()*500), status: 'incoming' };
+  activeTokens.unshift(newToken);
+  if(activeTokens.length > 10) activeTokens.pop();
+  updateWarRoom();
+}, 8000);
+</script>
+</body>
+</html>
