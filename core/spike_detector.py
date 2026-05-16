@@ -50,11 +50,12 @@ class SpikeDetector:
             token.spike_flagged = False
 
     def _passes(self, token: TokenData) -> bool:
-        if token.liquidity_sol < MIN_LIQUIDITY_SOL:
+        # Add safety checks for missing attributes
+        if hasattr(token, 'liquidity_sol') and token.liquidity_sol < MIN_LIQUIDITY_SOL:
             return False
-        if token.holder_count > 0 and token.holder_count < MIN_HOLDERS:
+        if hasattr(token, 'holder_count') and token.holder_count > 0 and token.holder_count < MIN_HOLDERS:
             return False
-        if token.is_rugpull_risk:
+        if hasattr(token, 'is_rugpull_risk') and token.is_rugpull_risk:
             return False
         return True
 
