@@ -4,8 +4,10 @@ from datetime import datetime
 from models.token import TokenData
 from models.db import User, get_db
 from utils.logger import logger
+import asyncio
 
-TREASURY_WALLET = "9xYzJYqJQh3xLvZ5XrWnMk2PqRt7YbVcNm4LkHgFdWp"
+# Your bot token from config
+TELEGRAM_BOT_TOKEN = "8487846380:AAH6rY0zH2vxFtJ2M3IuJMVTZ0Z9ghE2L-s"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -14,79 +16,64 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async for db in get_db():
         existing = await db.get(User, user_id)
         if not existing:
-            new_user = User(telegram_id=user_id, username=username)
+            new_user = User(telegram_id=user_id, username=username, tier="free")
             db.add(new_user)
             await db.commit()
     
     await update.message.reply_text(
         "⚡ *NO-BRAIN-TRADE PRO* ⚡\n\n"
-        "Real-time pump.fun spike detection\n"
-        "Free 150%+ spike alerts\n\n"
-        "*/menu* - Main menu\n"
-        "*/status* - Bot status\n"
-        "*/wallet* - Your wallet\n\n"
-        "🚀 Bot is live and watching for spikes!",
+        "✅ Bot is ONLINE\n"
+        "📊 Real-time pump.fun spike alerts\n"
+        "🚀 150%+ spikes detected instantly\n\n"
+        "Use /status to check your subscription\n"
+        "Use /alerts to enable/disable alerts",
         parse_mode="Markdown"
     )
-
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📊 Status", callback_data="status")],
-        [InlineKeyboardButton("👛 Wallet", callback_data="wallet")],
-        [InlineKeyboardButton("ℹ️ Info", callback_data="info")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📱 *Main Menu*", parse_mode="Markdown", reply_markup=reply_markup)
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    tier = "Free"
     
     async for db in get_db():
         user = await db.get(User, user_id)
-        if user and user.tier == "pro":
-            tier = "Pro ✅"
-    
+        tier = user.tier if user else "free"
+        
     await update.message.reply_text(
         f"📊 *Your Status*\n\n"
-        f"User: @{update.effective_user.username}\n"
-        f"Tier: {tier}\n"
-        f"Bot: 🟢 Active\n\n"
-        f"Spike threshold: 150%\n"
-        f"Monitoring: pump.fun",
+        f"👤 User: @{update.effective_user.username}\n"
+        f"💎 Tier: *{tier.upper()}*\n"
+        f"🔔 Alerts: {'ON' if user and user.alerts_enabled else 'OFF'}\n\n"
+        f"Pro features:\n"
+        f"• AI analysis\n"
+        f"• Auto-trading\n"
+        f"• Bundle detection",
         parse_mode="Markdown"
     )
 
-async def wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"👛 *Your Wallet Info*\n\n"
-        f"Treasury: `{TREASURY_WALLET}`\n\n"
-        f"Coming soon: Personal trading wallet",
-        parse_mode="Markdown"
-    )
-
-async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "ℹ️ *No-Brain-Trade Pro*\n\n"
-        "• Free spike alerts at 150%+\n"
-        "• Pro tier: AI analysis + auto-trading\n"
-        "• Non-custodial - you control keys\n\n"
-        "Contact @admin for Pro access",
-        parse_mode="Markdown"
-    )
+async def alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    async for db in get_db():
+        user = await db.get(User, user_id)
+        if user:
+            user.alerts_enabled = not user.alerts_enabled
+            await db.commit()
+            status = "ON" if user.alerts_enabled else "OFF"
+            await update.message.reply_text(f"🔔 Alerts turned *{status}*", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("Please /start first")
 
 async def broadcast_spike_alert(app, token: TokenData, spike_pct: float, pro_users: list, free_users: list):
-    """Broadcast spike alert to users"""
+    """Broadcast spike alert to ALL users"""
     message = (
         f"🚨 *SPIKE ALERT!* 🚨\n\n"
-        f"💰 *{token.symbol}* ({token.name})\n"
+        f"💰 *{token.symbol}*\n"
         f"📈 Price: `{token.price_sol:.8f} SOL`\n"
         f"⚡ Spike: *+{spike_pct:.0f}%*\n"
-        f"🔗 [View on DexScreener](https://dexscreener.com/solana/{token.mint})"
+        f"🔗 [View Chart](https://dexscreener.com/solana/{token.mint})"
     )
     
-    # Send to all users (limit to avoid rate limits)
-    all_users = list(set(free_users + pro_users))[:100]  # Max 100 per spike
+    # Send to all users (both free and pro)
+    all_users = list(set(free_users + pro_users))
     
     for user_id in all_users:
         try:
@@ -96,18 +83,13 @@ async def broadcast_spike_alert(app, token: TokenData, spike_pct: float, pro_use
                 parse_mode="Markdown",
                 disable_web_page_preview=True
             )
-            await asyncio.sleep(0.05)  # Small delay to avoid rate limits
+            logger.info(f"[bot] Sent spike alert to {user_id}")
+            await asyncio.sleep(0.1)  # Avoid rate limits
         except Exception as e:
-            logger.error(f"Failed to send to {user_id}: {e}")
+            logger.error(f"[bot] Failed to send to {user_id}: {e}")
 
 def register(app):
     """Register all handlers"""
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("wallet", wallet))
-    app.add_handler(CommandHandler("info", info))
-    app.add_handler(CallbackQueryHandler(lambda u,c: menu(u,c), pattern="menu"))
-    app.add_handler(CallbackQueryHandler(lambda u,c: status(u,c), pattern="status"))
-    app.add_handler(CallbackQueryHandler(lambda u,c: wallet(u,c), pattern="wallet"))
-    app.add_handler(CallbackQueryHandler(lambda u,c: info(u,c), pattern="info"))
+    app.add_handler(CommandHandler("alerts", alerts))p
